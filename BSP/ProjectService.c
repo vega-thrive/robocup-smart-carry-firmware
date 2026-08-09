@@ -267,8 +267,6 @@ void ProjectService_Run(void)
         return;
     }
 
-    /* if (route_state == ROUTE_FINAL_FORWARD_1)  --  replaced by REAR_ALIGN phase 1 */
-
     if (route_state == ROUTE_PAUSE)
     {
         if (++lcd_div >= 5)
@@ -344,7 +342,7 @@ void ProjectService_Run(void)
     {
         if (++lcd_div >= 5)
         {
-            sprintf(buf, "Rot30 A:%3d", (int)Angle);
+            sprintf(buf, "Align A:%3d", (int)Angle);
             ChassisPos_DrawStatus(20, buf);
             lcd_div = 0;
         }
@@ -355,7 +353,10 @@ void ProjectService_Run(void)
     {
         if (++lcd_div >= 5)
         {
-            ChassisPos_DrawStatus(20, "Left 20");
+            if (final_left_stage == 0)
+                ChassisPos_DrawStatus(20, "Left 11cm");
+            else
+                ChassisPos_DrawStatus(20, "Left 2cm");
             lcd_div = 0;
         }
         return;
@@ -498,7 +499,7 @@ void ProjectService_OnTimerElapsed(TIM_HandleTypeDef *htim)
                 lcd_div = 0;
                 mode_entry_tick = 0;
                 ChassisPos_Start(155400, 155400, 155400, 155400);
-                ChassisPos_DrawStatus(1, "Home Fwd 20cm");
+                ChassisPos_DrawStatus(1, "Home Fwd 84cm");
             }
         }
     }
@@ -629,6 +630,7 @@ void ProjectService_OnTimerElapsed(TIM_HandleTypeDef *htim)
         else
         {
             int spd = ROTATE_90_SPEED;
+            /* 接近目标时线性减速: 剩余角度>70°全速372, 每多1°降13.6, 最低80 */
             if (a > 70.0f)
             {
                 spd = 372 - (int)((a - 70.0f) * 13.6f);
@@ -722,8 +724,6 @@ void ProjectService_OnTimerElapsed(TIM_HandleTypeDef *htim)
             }
         }
     }
-
-    /* FINAL_FORWARD_1 removed -- replaced by REAR_ALIGN phase 1 */
 
     if (route_state == ROUTE_PAUSE)
     {
@@ -824,12 +824,14 @@ void ProjectService_OnTimerElapsed(TIM_HandleTypeDef *htim)
                 ChassisPos_ResetVelocityPid();
                 mode_entry_tick = 1;
                 {
+                    /* 先按速比折算对角位移, 再乘2减74000为实测修正公式,
+                     * 等效横向位移约 7.3cm (横向标定 18500 counts/cm). */
                     int lat = (int)((long)FINAL_LF_DISTANCE
                                   * FINAL_LF_LEFT_SPEED / FINAL_LF_FORWARD_SPEED);
                     lat = lat * 2 - 74000;
                     ChassisPos_Start(-lat, lat, -lat, lat);
                 }
-                ChassisPos_DrawStatus(1, "Left 72cm");
+                ChassisPos_DrawStatus(1, "Left 7cm");
             }
         }
         else if (mode_entry_tick == 1)
@@ -940,6 +942,7 @@ void ProjectService_OnTimerElapsed(TIM_HandleTypeDef *htim)
             {
                 final_left_heading_stable_ticks = 0;
 
+                /* 回中航向角误差分三档速度: >15°全速372, >6°中速264, 小误差慢速168 */
                 if (error_abs > 15.0f)      rotate_speed = FINAL_ROTATE_ALIGN_SPEED;
                 else if (error_abs > 6.0f)  rotate_speed = 264;
                 else                        rotate_speed = 168;
@@ -1015,21 +1018,27 @@ void ProjectService_OnTimerElapsed(TIM_HandleTypeDef *htim)
             {
                 case ROUTE_FINAL_ROTATE_30:
                     ChassisPos_ResetEncoder();
-                    ChassisPos_DrawStatus(1, "Rotate 55 CW"); break;
+                    ChassisPos_DrawStatus(1, "Rotate 30 CW"); break;
                 case ROUTE_FINAL_FORWARD_2:
                     ChassisPos_Start(55500, 55500, 55500, 55500);
-                    ChassisPos_DrawStatus(1, "Final Fwd 2"); break;
+                    ChassisPos_DrawStatus(1, "Final Fwd 30cm"); break;
                 case ROUTE_FINAL_ROTATE_ALIGN:
                     ChassisPos_ResetEncoder();
-                    ChassisPos_DrawStatus(1, "Rotate 30 CW"); break;
+                    ChassisPos_DrawStatus(1, "Align Yaw"); break;
                 case ROUTE_FINAL_LEFT_40:
                     if (final_left_stage == 0)
+                    {
                         ChassisPos_Start(
                             -203500,  203500, -203500,  203500);
+                        ChassisPos_DrawStatus(1, "Left 11 cm");
+                    }
                     else
+                    {
                         ChassisPos_Start(
                             -37000,  37000, -37000,  37000);
-                    ChassisPos_DrawStatus(1, "Left 20 cm"); break;
+                        ChassisPos_DrawStatus(1, "Left 2 cm");
+                    }
+                    break;
                 case ROUTE_FINAL_ROTATE_180:
                     ChassisPos_ResetEncoder();
                     ChassisPos_DrawStatus(1, "Rotate 180 CW"); break;
