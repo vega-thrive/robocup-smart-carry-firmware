@@ -1,0 +1,691 @@
+/* USER CODE BEGIN Header */
+/**
+  ******************************************************************************
+  * @file           : main.c
+  * @brief          : Main program body
+  ******************************************************************************
+  * @attention
+  *
+  * Copyright (c) 2025 STMicroelectronics.
+  * All rights reserved.
+  *
+  * This software is licensed under terms that can be found in the LICENSE file
+  * in the root directory of this software component.
+  * If no LICENSE file comes with this software, it is provided AS-IS.
+  *
+  ******************************************************************************
+  */
+/* USER CODE END Header */
+/* Includes ------------------------------------------------------------------*/
+
+#include "main.h"
+#include "dma.h"
+#include "tim.h"
+#include "usart.h"
+#include "gpio.h"
+#include "fsmc.h"
+
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
+/* USER CODE END Includes */
+
+/* Private typedef -----------------------------------------------------------*/
+/* USER CODE BEGIN PTD */
+
+/* USER CODE END PTD */
+
+/* Private define ------------------------------------------------------------*/
+/* USER CODE BEGIN PD */
+
+/* USER CODE END PD */
+
+/* Private macro -------------------------------------------------------------*/
+/* USER CODE BEGIN PM */
+
+/* USER CODE END PM */
+
+/* Private variables ---------------------------------------------------------*/
+
+/* USER CODE BEGIN PV */
+
+/* USER CODE END PV */
+
+/* Private function prototypes -----------------------------------------------*/
+void SystemClock_Config(void);
+/* USER CODE BEGIN PFP */
+
+/* USER CODE END PFP */
+
+/* Private user code ---------------------------------------------------------*/
+/* USER CODE BEGIN 0 */
+
+/* USER CODE END 0 */
+
+#include <stdio.h>
+#include "HWT101.h"
+#include "LCD.h"
+#include "ChassisMotor.h"
+#include "LineFollow.h"
+#include "CompetitionTask.h"
+#include "ProjectService.h"
+#include "Servo4.h"
+#include "MaxiCam.h"
+#include "Sensor.h"
+
+/* One-shot CH3 range test. Set to 0 after measuring the real travel. */
+#define SERVO_RANGE_TEST_MODE   0
+
+/* Stand-alone test: five colors index the five-slot turntable by 72 degrees.
+ * Set to 0 to restore the complete competition program below. */
+#define COLOR_SERVO_TEST_MODE   0
+#define COLOR_SERVO_CHANNEL     2U
+#define COLOR_SERVO_HOME_US   780U
+#define COLOR_SERVO_STEP_US   400U  /* 72 degrees on the measured 360-degree servo */
+#define COLOR_CAMERA_BOOT_MS  4000U
+
+/* Temporary bench test: rotation servo on Gray2 CH3 / PA4. */
+#define SERVO_CHANNEL_TEST_MODE 0
+#define SERVO_TEST_LOW_US       1400U
+#define SERVO_TEST_HIGH_US      1600U
+
+/* 奖杯抓取测试: 按键启动 → 发送 0x02 切换到视觉模型模式2(奖杯检测,
+ * py CODE_MAP jiang_bei=26) → 收到奖杯信号 → 总舵舵机(旋转舵机 CH2)转一步 →
+ * 转满 3 次 → 小舵机 CH3~CH7 全部夹住奖杯.
+ * 调试完设为 0, 恢复正式比赛流程. */
+#define TROPHY_GRAB_TEST_MODE  0
+#define TROPHY_GRAB_DETECT_CODE  26U  /* 视觉py CODE_MAP: jiang_bei=26; 0 = 任意类 */
+#define TROPHY_GRAB_MAX_COUNT      3U
+#define TROPHY_GRAB_CONFIRM_HITS   1U  /* 命中次数; 帧率慢时用1, 防重复靠消失+沉降 */
+#define TROPHY_GRAB_CONFIRM_WINDOW_MS 300U
+#define TROPHY_GRAB_CLEAR_MS       400U /* 转盘后目标必须消失再捕获 */
+#define TROPHY_GRAB_SERVO_SETTLE_MS 800U
+#define TROPHY_GRAB_DECEL_MS        150U
+#define TROPHY_GRAB_JAM_TIMEOUT_MS 1800U
+#define TROPHY_ARM_TEST_DELAY_MS    500U
+#define TROPHY_GRAB_MODE_RETRIES   10U
+#define TROPHY_GRAB_MODE_RETRY_MS  500U
+#define TROPHY_GRAB_LINE_SPEED      240
+#define TROPHY_GRAB_SLOW_SPEED      200
+
+static volatile uint8_t trophy_grab_line_run;
+static volatile int trophy_grab_requested_speed = TROPHY_GRAB_LINE_SPEED;
+static int trophy_grab_last_steer;
+
+/* Test-only front 8-channel line following at 200 Hz. */
+static void TrophyGrab_LineTick(void)
+{
+    int i;
+    int black_count;
+    int line_state = 0;
+    int turn_target;
+
+    ChassisMotor_SampleEncoders();
+    if (!trophy_grab_line_run)
+    {
+        LineFollow_Stop();
+        ChassisMotor_ControlTick(wheel_target);
+        return;
+    }
+
+    Sensor_Get();
+    black_count = GS_state[1] + GS_state[2] + GS_state[3] + GS_state[4]
+                + GS_state[5] + GS_state[6] + GS_state[7] + GS_state[8];
+    if (black_count == 0)
+    {
+        turn_target = trophy_grab_last_steer;
+    }
+    else
+    {
+        for (i = 1; i <= 8; i++)
+            if (GS_state[i]) line_state += line_weights[i];
+        turn_target = LineFollow_ComputeLinePID(line_state);
+        trophy_grab_last_steer = turn_target;
+    }
+
+    LineFollow_SetWheelTargets(trophy_grab_requested_speed + turn_target,
+                               trophy_grab_requested_speed + turn_target,
+                               trophy_grab_requested_speed - turn_target,
+                               trophy_grab_requested_speed - turn_target);
+    ChassisMotor_ControlTick(wheel_target);
+}
+
+int main(void)
+{
+    /* MCU Configuration--------------------------------------------------------*/
+    HAL_Init();
+    SystemClock_Config();
+    MX_GPIO_Init();
+    MX_DMA_Init();
+    MX_FSMC_Init();
+    MX_UART4_Init();
+    MX_UART5_Init();
+    MX_USART1_UART_Init();
+    MX_TIM2_Init();
+    MX_TIM3_Init();
+    MX_TIM4_Init();
+    MX_TIM5_Init();
+    MX_TIM8_Init();
+    MX_TIM7_Init();
+
+    /* Init LCD */
+    LCD_Init();
+    LCD_FillScreen(LCD_BLACK);
+    HAL_Delay(1000);
+
+#if SERVO_RANGE_TEST_MODE
+    static const uint16_t range_test_pulse[] =
+    {
+        1500U, 1750U, 2000U, 2250U, 2500U,
+        1500U, 1250U, 1000U, 750U, 500U, 1500U
+    };
+    uint8_t range_index;
+
+    /* Only Gray2 CH3 / PA4 is enabled.  All chassis and vision functions are
+     * deliberately excluded from this test branch. */
+    Servo4_Init();
+    LCD_DrawString_NoDMA(1, 40, "CH3 RANGE TEST",
+                         LCD_WHITE, LCD_BLACK);
+    LCD_DrawString_NoDMA(1, 80, "CURRENT PWM:",
+                         LCD_GREEN, LCD_BLACK);
+    LCD_DrawString_NoDMA(1, 160, "CHASSIS DISABLED",
+                         LCD_RED, LCD_BLACK);
+    LCD_DrawString_NoDMA(1, 200, "POWER OFF IF HIT",
+                         LCD_RED, LCD_BLACK);
+
+    for (range_index = 0U;
+         range_index < (uint8_t)(sizeof(range_test_pulse) /
+                                 sizeof(range_test_pulse[0]));
+         range_index++)
+    {
+        Servo4_SetPulse(2U, range_test_pulse[range_index]);
+        LCD_DrawNumber((int32_t)range_test_pulse[range_index],
+                       120U, 80U, LCD_GREEN, LCD_BLACK, ALIGN_LEFT);
+        HAL_Delay((range_index == 0U) ? 5000U : 3000U);
+    }
+
+    LCD_DrawString_NoDMA(1, 120, "DONE: HOLD 1500",
+                         LCD_WHITE, LCD_BLACK);
+    while (1)
+    {
+        Servo4_SetPulse(2U, 1500U);
+        HAL_Delay(1000U);
+    }
+#elif COLOR_SERVO_TEST_MODE
+    MaxiCam_Frame color_frame;
+    uint32_t color_last_sequence = 0U;
+    uint8_t color_count = 0U;
+    /* uint8_t color_seen_mask = 0U;  原逻辑使用, 已注释 */
+    /* uint8_t color_finished = 0U;   原逻辑使用, 已注释 */
+    char color_count_text[] = "COLOR COUNT: 0";
+
+    /* The chassis, QR scanner and complete race state machine are deliberately
+     * not initialized in this test branch. */
+    Servo4_Init();
+    Servo4_SetPulse(COLOR_SERVO_CHANNEL, COLOR_SERVO_HOME_US);
+    MaxiCam_Init(&huart4);
+    (void)MaxiCam_StartReceiveIT();
+
+    LCD_DrawString_NoDMA(1, 40, "COLOR SERVO TEST",
+                         LCD_WHITE, LCD_BLACK);
+    LCD_DrawString_NoDMA(1, 80, "CAMERA BOOT 4S  ",
+                         LCD_GREEN, LCD_BLACK);
+    LCD_DrawString_NoDMA(1, 120, "CH3: 780 us",
+                         LCD_WHITE, LCD_BLACK);
+    LCD_DrawString_NoDMA(1, 200, color_count_text,
+                         LCD_GREEN, LCD_BLACK);
+    LCD_DrawString_NoDMA(1, 160, "CHASSIS DISABLED",
+                         LCD_RED, LCD_BLACK);
+
+    /* MaxiCam may still be booting or may already be inside its circle-mode
+     * loop.  Exit that loop first, then request COLOR from the outer loop. */
+    HAL_Delay(COLOR_CAMERA_BOOT_MS);
+    (void)MaxiCam_SetMode(MAXICAM_MODE_STOP);
+    HAL_Delay(200U);
+    (void)MaxiCam_SetMode(MAXICAM_MODE_COLOR);
+    LCD_DrawString_NoDMA(1, 80, "WAIT COLOR 21-25",
+                         LCD_GREEN, LCD_BLACK);
+
+    /* ---- 简化测试: 识别到任意颜色(21-25) → CH2 转一步 ----
+     * 原逻辑(5色去重计数/5色齐切回CIRCLE)已注释保留, 需要时恢复. */
+    while (1)
+    {
+        if (MaxiCam_GetLatest(&color_frame, 250U)
+            && (color_frame.sequence != color_last_sequence))
+        {
+            color_last_sequence = color_frame.sequence;
+            if ((color_frame.data[0] >= 21U)
+                && (color_frame.data[0] <= 25U))
+            {
+                /* 每识别到一次(允许重复), 转盘前进一档, 超过第4档回零点. */
+                color_count = (color_count >= 4U) ? 0U : (uint8_t)(color_count + 1U);
+                Servo4_SetPulse(COLOR_SERVO_CHANNEL,
+                                (uint16_t)(COLOR_SERVO_HOME_US
+                                           + COLOR_SERVO_STEP_US * color_count));
+                color_count_text[13] = (char)('0' + color_count);
+                LCD_DrawString_NoDMA(1, 200, color_count_text,
+                                     LCD_GREEN, LCD_BLACK);
+
+                /* ==== 原逻辑 (注释保留) ====
+                uint8_t color_bit = (uint8_t)(1U << (color_frame.data[0] - 21U));
+                if ((color_seen_mask & color_bit) != 0U)
+                {
+                    HAL_Delay(10);
+                    continue;
+                }
+                color_seen_mask |= color_bit;
+                color_count++;
+                if (color_count < 5U)
+                {
+                    Servo4_SetPulse(COLOR_SERVO_CHANNEL,
+                                    (uint16_t)(COLOR_SERVO_HOME_US
+                                               + COLOR_SERVO_STEP_US * color_count));
+                }
+                if (color_count >= 5U)
+                {
+                    color_finished = 1U;
+                    (void)MaxiCam_SetMode(MAXICAM_MODE_CIRCLE);
+                    LCD_DrawString_NoDMA(1, 80, "5 COLORS -> CIRCLE",
+                                         LCD_GREEN, LCD_BLACK);
+                }
+                else
+                {
+                    LCD_DrawString_NoDMA(1, 80, "WAIT NEXT COLOR ",
+                                         LCD_GREEN, LCD_BLACK);
+                }
+                ==== 原逻辑结束 ==== */
+            }
+        }
+        HAL_Delay(10);
+    }
+#elif SERVO_CHANNEL_TEST_MODE
+    /* Test only CH3/PA4. Servo4_Init leaves every other channel at PWM off. */
+    Servo4_Init();
+    Servo4_SetPulse(2U, SERVO_TEST_LOW_US);
+    LCD_DrawString_NoDMA(1, 40, "ROTATE SERVO CH3",
+                         LCD_WHITE, LCD_BLACK);
+    LCD_DrawString_NoDMA(1, 80, "PA4: 1400/1600 us",
+                         LCD_GREEN, LCD_BLACK);
+    LCD_DrawString_NoDMA(1, 120, "OTHER PWM OFF",
+                         LCD_WHITE, LCD_BLACK);
+    LCD_DrawString_NoDMA(1, 160, "CHASSIS DISABLED",
+                         LCD_RED, LCD_BLACK);
+    while (1)
+    {
+        Servo4_SetPulse(2U, SERVO_TEST_LOW_US);
+        HAL_Delay(3000);
+        Servo4_SetPulse(2U, SERVO_TEST_HIGH_US);
+        HAL_Delay(3000);
+    }
+#elif TROPHY_GRAB_TEST_MODE
+    MaxiCam_Frame trophy_frame;
+    uint32_t trophy_last_sequence = 0U;
+    uint32_t trophy_last_seen_ms = 0U;
+    uint32_t trophy_rotate_started_ms = 0U;
+    uint32_t trophy_decel_started_ms = 0U;
+    uint32_t trophy_confirm_window_ms = 0U;
+    uint8_t trophy_confirm_count = 0U;
+    uint8_t trophy_collected = 0U;
+    uint8_t trophy_armed = 1U;
+    uint8_t trophy_rotate_pending = 0U;
+    uint8_t trophy_pending_step = 0U;
+    uint8_t trophy_jammed = 0U;
+    uint8_t trophy_finished = 0U;
+    uint8_t trophy_arm_pose_applied = 0U;
+    uint32_t trophy_arm_pose_at_ms = 0U;
+    uint8_t trophy_mode_try;
+    uint32_t trophy_next_mode_tx_ms = 0U;
+    uint32_t trophy_frame_count = 0U;
+
+    /* 台架测试: 只启用 UART4、LCD 和舵机, 底盘不初始化. */
+    Servo4_Init();
+    Servo4_RotationHome();
+    Servo4_LittleAllOpen();
+    MaxiCam_Init(&huart4);
+    (void)MaxiCam_StartReceiveIT();
+
+    LCD_DrawString_NoDMA(1, 40, "TROPHY GRAB TEST",
+                         LCD_WHITE, LCD_BLACK);
+    LCD_DrawString_NoDMA(1, 80, "PRESS BTN: SEND 02",
+                         LCD_GREEN, LCD_BLACK);
+    LCD_DrawString_NoDMA(1, 120, "BTN START LINE+CAM",
+                         LCD_RED, LCD_BLACK);
+    LCD_DrawString_NoDMA(1, 160, "CT: 0",
+                         LCD_GREEN, LCD_BLACK);
+    LCD_DrawString_NoDMA(1, 200, "FRT: 0",
+                         LCD_WHITE, LCD_BLACK);
+    LCD_DrawString_NoDMA(1, 240, "RX: 0",
+                         LCD_WHITE, LCD_BLACK);
+    LCD_DrawString_NoDMA(1, 280, "STATE:WAIT TROPHY",
+                         LCD_WHITE, LCD_BLACK);
+
+    /* 按键后才发送 0x02, 把视觉模型切换到模式2(奖杯检测). */
+    while (HAL_GPIO_ReadPin(START_BTN_GPIO_Port, START_BTN_Pin)
+           != GPIO_PIN_RESET)
+    {
+        HAL_Delay(10U);
+    }
+    HAL_Delay(50U);
+    ChassisMotor_Init(0.62f, 0.06f, 0.00f);
+    LineFollow_Init();
+    LineFollow_ResetLinePID();
+    trophy_grab_last_steer = 0;
+    trophy_grab_requested_speed = TROPHY_GRAB_LINE_SPEED;
+    trophy_grab_line_run = 1U;
+    HAL_TIM_Base_Start_IT(&htim7);
+    LCD_DrawString_NoDMA(1, 120, "LINE FOLLOW: 240 ",
+                         LCD_GREEN, LCD_BLACK);
+    LCD_DrawString_NoDMA(1, 80, "STOP 0x04 M2 0x02 ",
+                         LCD_GREEN, LCD_BLACK);
+
+    /* 摄像头模式循环内只认 0x04 (main.py 141/199/245行), 其它字节被丢弃,
+     * 所以必须先发 0x04 退出模式循环; 串口 FIFO 按序缓存, 后续 0x02
+     * 会被外层主循环读到, 无需长延时. */
+    (void)MaxiCam_SetMode(MAXICAM_MODE_STOP);
+    HAL_Delay(50U);
+
+    trophy_mode_try = 0U;
+    trophy_next_mode_tx_ms = HAL_GetTick();   /* 按键后立即发第一帧 0x02 */
+    trophy_last_seen_ms = HAL_GetTick();      /* 初始 tick, 避免 now-0 大差值 */
+    trophy_confirm_window_ms = HAL_GetTick();
+
+    while (1)
+    {
+        uint32_t now = HAL_GetTick();
+        uint8_t fresh_detection = 0U;
+        char num_buf[16];
+
+        /* 每 500ms 重发一次 0x02, 共 10 次, 保证摄像头完成模式切换. */
+        if ((trophy_mode_try < TROPHY_GRAB_MODE_RETRIES)
+            && ((int32_t)(now - trophy_next_mode_tx_ms) >= 0))
+        {
+            (void)MaxiCam_SetMode(MAXICAM_MODE_ABC);
+            trophy_mode_try++;
+            trophy_next_mode_tx_ms = now + TROPHY_GRAB_MODE_RETRY_MS;
+        }
+
+        if (MaxiCam_GetLatest(&trophy_frame, 250U)
+            && (trophy_frame.sequence != trophy_last_sequence))
+        {
+            uint8_t code = trophy_frame.data[0];
+            trophy_last_sequence = trophy_frame.sequence;
+            trophy_frame_count++;
+            sprintf(num_buf, "FRT:%4u", trophy_frame_count);
+            LCD_DrawString_NoDMA(1, 200, num_buf,
+                                 LCD_WHITE, LCD_BLACK);
+            sprintf(num_buf, "RX:%3u", code);
+            LCD_DrawString_NoDMA(1, 240, num_buf,
+                                 LCD_GREEN, LCD_BLACK);
+            if ((TROPHY_GRAB_DETECT_CODE == 0U)
+                || (code == TROPHY_GRAB_DETECT_CODE))
+            {
+                fresh_detection = 1U;
+                trophy_last_seen_ms = now;
+                if (trophy_armed)
+                {
+                    if ((trophy_confirm_count == 0U)
+                        || ((now - trophy_confirm_window_ms)
+                            > TROPHY_GRAB_CONFIRM_WINDOW_MS))
+                    {
+                        trophy_confirm_count = 1U;
+                        trophy_confirm_window_ms = now;
+                    }
+                    else if (trophy_confirm_count
+                             < TROPHY_GRAB_CONFIRM_HITS)
+                    {
+                        trophy_confirm_count++;
+                    }
+                }
+            }
+        }
+
+        if (trophy_armed
+            && (trophy_confirm_count >= TROPHY_GRAB_CONFIRM_HITS))
+        {
+            trophy_armed = 0U;
+            trophy_confirm_count = 0U;
+            trophy_rotate_pending = 1U;
+            trophy_pending_step = (uint8_t)(trophy_collected + 1U);
+            trophy_decel_started_ms = now;
+            trophy_grab_requested_speed = TROPHY_GRAB_SLOW_SPEED;
+            LCD_DrawString_NoDMA(1, 80, "DETECT -> SLOW   ",
+                                 LCD_GREEN, LCD_BLACK);
+            LCD_DrawString_NoDMA(1, 120, "LINE FOLLOW: 200 ",
+                                 LCD_GREEN, LCD_BLACK);
+            LCD_DrawString_NoDMA(1, 280, "STATE:DECEL      ",
+                                 LCD_GREEN, LCD_BLACK);
+        }
+
+        /* First reduce chassis speed, then rotate the occupied slot away from
+         * the collection mouth. */
+        if (trophy_rotate_pending
+            && ((now - trophy_decel_started_ms) >= TROPHY_GRAB_DECEL_MS))
+        {
+            trophy_rotate_pending = 0U;
+            trophy_collected = trophy_pending_step;
+            trophy_rotate_started_ms = now;
+            Servo4_RotationSetStep(trophy_collected);
+            sprintf(num_buf, "CT:%3u", trophy_collected);
+            LCD_DrawString_NoDMA(1, 160, num_buf,
+                                 LCD_GREEN, LCD_BLACK);
+            LCD_DrawString_NoDMA(1, 80, "SLOW -> ROTATE   ",
+                                 LCD_GREEN, LCD_BLACK);
+            LCD_DrawString_NoDMA(1, 280, "STATE:LOCKED     ",
+                                 LCD_GREEN, LCD_BLACK);
+        }
+
+        /* 转盘沉降完成且目标从视野消失后, 才允许捕获下一个奖杯. */
+        if (!trophy_armed && !trophy_rotate_pending && !trophy_jammed
+            && (trophy_collected < TROPHY_GRAB_MAX_COUNT)
+            && ((now - trophy_rotate_started_ms)
+                >= TROPHY_GRAB_SERVO_SETTLE_MS)
+            && ((now - trophy_last_seen_ms) >= TROPHY_GRAB_CLEAR_MS))
+        {
+            trophy_armed = 1U;
+            trophy_confirm_count = 0U;
+            /* The three trophies are close together.  Once the first one is
+             * seen, remain at collection speed until all three are stored. */
+            trophy_grab_requested_speed = TROPHY_GRAB_SLOW_SPEED;
+            LCD_DrawString_NoDMA(1, 80, "WAIT NEXT: SLOW  ",
+                                 LCD_GREEN, LCD_BLACK);
+            LCD_DrawString_NoDMA(1, 120, "LINE FOLLOW: 200 ",
+                                 LCD_GREEN, LCD_BLACK);
+            LCD_DrawString_NoDMA(1, 280, "STATE:WAIT TROPHY",
+                                 LCD_GREEN, LCD_BLACK);
+        }
+
+        /* Stop on a persistent obstruction instead of continuing to push it. */
+        if (!trophy_armed && !trophy_rotate_pending && !trophy_jammed
+            && (trophy_collected < TROPHY_GRAB_MAX_COUNT)
+            && ((now - trophy_rotate_started_ms)
+                >= TROPHY_GRAB_JAM_TIMEOUT_MS)
+            && ((now - trophy_last_seen_ms) < TROPHY_GRAB_CLEAR_MS))
+        {
+            trophy_jammed = 1U;
+            trophy_grab_requested_speed = 0;
+            trophy_grab_line_run = 0U;
+            LineFollow_Stop();
+            LCD_DrawString_NoDMA(1, 80, "STOP: TROPHY JAM ",
+                                 LCD_RED, LCD_BLACK);
+            LCD_DrawString_NoDMA(1, 120, "LINE FOLLOW: 0   ",
+                                 LCD_RED, LCD_BLACK);
+            LCD_DrawString_NoDMA(1, 280, "STATE:JAM        ",
+                                 LCD_RED, LCD_BLACK);
+        }
+
+        if (!trophy_jammed && !trophy_finished && !trophy_rotate_pending
+            && (trophy_collected >= TROPHY_GRAB_MAX_COUNT)
+            && ((now - trophy_rotate_started_ms)
+                >= TROPHY_GRAB_SERVO_SETTLE_MS))
+        {
+            trophy_finished = 1U;
+            trophy_grab_requested_speed = 0;
+            trophy_grab_line_run = 0U;
+            LineFollow_Stop();
+            Servo4_LittleAllClose();   /* 转满三次: 小舵机全部夹住奖杯 */
+            trophy_arm_pose_at_ms = now + TROPHY_ARM_TEST_DELAY_MS;
+            LCD_DrawString_NoDMA(1, 80, "DONE: CLAMP WAIT ",
+                                 LCD_GREEN, LCD_BLACK);
+            LCD_DrawString_NoDMA(1, 280, "STATE:DONE       ",
+                                 LCD_GREEN, LCD_BLACK);
+        }
+
+        /* Bench check for the task-2 ready pose.  Let CH3..CH7 grip first,
+         * then command CH0/CH1 without blocking the main loop. */
+        if (trophy_finished && !trophy_arm_pose_applied
+            && ((int32_t)(now - trophy_arm_pose_at_ms) >= 0))
+        {
+            trophy_arm_pose_applied = 1U;
+            Servo4_UseTask2Parameters();  /* CH0=900us, CH1=1500us */
+            LCD_DrawString_NoDMA(1, 80, "ARM READY TEST    ",
+                                 LCD_GREEN, LCD_BLACK);
+            LCD_DrawString_NoDMA(1, 120, "CH0:900 CH1:1500 ",
+                                 LCD_GREEN, LCD_BLACK);
+        }
+
+        /* 确认窗口超时后清空计数, 防止零散帧凑数误触发. */
+        if (!fresh_detection && trophy_armed
+            && (trophy_confirm_count > 0U)
+            && ((now - trophy_confirm_window_ms)
+                > TROPHY_GRAB_CONFIRM_WINDOW_MS))
+        {
+            trophy_confirm_count = 0U;
+        }
+        HAL_Delay(10U);
+    }
+#else
+    /* Init Servo (TIM9 software PWM) */
+    Servo4_Init();
+
+    /* Init Motor & Encoder */
+    ChassisMotor_Init(0.62f, 0.06f, 0.00f);
+
+    /* Wait for START_BTN (PG10, active-low) press before running */
+    LCD_DrawString_NoDMA(1, 120, "Press BTN to Start", LCD_WHITE, LCD_BLACK);
+    while (HAL_GPIO_ReadPin(START_BTN_GPIO_Port, START_BTN_Pin) != GPIO_PIN_RESET)
+    {
+        HAL_Delay(10);
+    }
+    HAL_Delay(50);  /* debounce */
+    LCD_FillScreen(LCD_BLACK);
+
+    CompetitionTask_Init();
+
+    while (1)
+    {
+        CompetitionTask_Process();
+        HAL_Delay(10);
+    }
+#endif
+}
+/**
+  * @brief System Clock Configuration
+  * @retval None
+  */
+void SystemClock_Config(void)
+{
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+  /** Configure the main internal regulator output voltage
+  */
+  __HAL_RCC_PWR_CLK_ENABLE();
+  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+
+  /** Initializes the RCC Oscillators according to the specified parameters
+  * in the RCC_OscInitTypeDef structure.
+  */
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
+  RCC_OscInitStruct.PLL.PLLM = 8;
+  RCC_OscInitStruct.PLL.PLLN = 168;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+  RCC_OscInitStruct.PLL.PLLQ = 4;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Initializes the CPU, AHB and APB buses clocks
+  */
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
+
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_5) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
+/* USER CODE BEGIN 4 */
+
+/* USER CODE END 4 */
+
+/**
+  * @brief  Period elapsed callback in non blocking mode
+  * @note   This function is called  when TIM6 interrupt took place, inside
+  * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
+  * a global variable "uwTick" used as application time base.
+  * @param  htim : TIM handle
+  * @retval None
+  */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  /* USER CODE BEGIN Callback 0 */
+
+  /* USER CODE END Callback 0 */
+  if (htim->Instance == TIM6)
+  {
+    HAL_IncTick();
+  }
+  else if (htim->Instance == TIM7)
+  {
+#if TROPHY_GRAB_TEST_MODE
+    TrophyGrab_LineTick();
+#else
+    ProjectService_OnTimerElapsed(htim);
+#endif
+  }
+  /* USER CODE BEGIN Callback 1 */
+
+  /* USER CODE END Callback 1 */
+}
+
+/**
+  * @brief  This function is executed in case of error occurrence.
+  * @retval None
+  */
+void Error_Handler(void)
+{
+  /* USER CODE BEGIN Error_Handler_Debug */
+  /* User can add his own implementation to report the HAL error return state */
+  __disable_irq();
+  while (1)
+  {
+		
+  }
+  /* USER CODE END Error_Handler_Debug */
+}
+
+#ifdef  USE_FULL_ASSERT
+/**
+  * @brief  Reports the name of the source file and the source line number
+  *         where the assert_param error has occurred.
+  * @param  file: pointer to the source file name
+  * @param  line: assert_param error line source number
+  * @retval None
+  */
+void assert_failed(uint8_t *file, uint32_t line)
+{
+  /* USER CODE BEGIN 6 */
+  /* User can add his own implementation to report the file name and line number,
+     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+  /* USER CODE END 6 */
+}
+#endif /* USE_FULL_ASSERT */

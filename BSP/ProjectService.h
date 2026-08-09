@@ -1,0 +1,38 @@
+#ifndef __PROJECT_SERVICE_H__
+#define __PROJECT_SERVICE_H__
+
+#include "main.h"
+
+/* 比赛路线状态机，18个状态 */
+typedef enum
+{
+    ROUTE_HOME_LAUNCH = 0,
+    ROUTE_HOME_FIXED_FORWARD,
+    ROUTE_HOME_FIXED_PAUSE,
+    ROUTE_HOME_FIXED_LEFT,
+    ROUTE_HOME_FIXED_SETTLE,
+    ROUTE_TRACK_FIRST,
+    ROUTE_TRACK_RETURN,
+    ROUTE_TROPHY,
+    ROUTE_ROTATE_90,
+    ROUTE_CURVE,
+    ROUTE_REAR_ALIGN,
+    ROUTE_FINAL_FORWARD_1,
+    ROUTE_PAUSE,
+    ROUTE_REAR_ALIGN_2,
+    ROUTE_PAUSE_2,
+    ROUTE_FINAL_LEFT_FORWARD,
+    ROUTE_FINAL_ROTATE_69,
+    ROUTE_FINAL_FORWARD_2,
+    ROUTE_FINAL_ROTATE_30,
+    ROUTE_FINAL_LEFT_40,
+    ROUTE_FINAL_ROTATE_180,
+    ROUTE_PAUSE_GENERIC,
+    ROUTE_VISION_ALIGN
+} RouteState;
+
+void ProjectService_Init(void);
+void ProjectService_Run(void);
+void ProjectService_OnTimerElapsed(TIM_HandleTypeDef *htim);
+
+#endif

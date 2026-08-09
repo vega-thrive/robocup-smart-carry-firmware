@@ -1,0 +1,56 @@
+#ifndef __LINE_FOLLOW_H__
+#define __LINE_FOLLOW_H__
+
+#include "main.h"
+
+/* Encoder counts per 5 ms control period. */
+#define LINE_FOLLOW_SPEED_TARGET 255
+#define LINE_FOLLOW_TURN_TARGET   52
+#define LINE_FOLLOW_TURN_LIMIT   180
+
+/* Fixed-route distances. Tune MOVE_ENCODER_COUNTS_PER_CM after a field test. */
+#define RIGHT_MOVE_DISTANCE_CM      54
+#define BACK_MOVE_DISTANCE_CM       18
+#define MOVE_ENCODER_COUNTS_PER_CM 1850
+
+#define RIGHT_MOVE_DISTANCE (RIGHT_MOVE_DISTANCE_CM * MOVE_ENCODER_COUNTS_PER_CM)
+#define BACK_MOVE_DISTANCE  (BACK_MOVE_DISTANCE_CM  * MOVE_ENCODER_COUNTS_PER_CM)
+#define RIGHT_MOVE_SPEED 200
+#define BACK_MOVE_SPEED  200
+
+/* Fixed-route wheel calibration. Motors 1+4 (diagonal) are mechanically
+ * weaker than motors 2+3 (opposite diagonal). Boost the weak diagonal
+ * and slightly reduce the strong one so all four contribute equally. */
+#define FIXED_MOVE_SPEED_SCALE_1 1.05f
+#define FIXED_MOVE_SPEED_SCALE_2 0.95f
+#define FIXED_MOVE_SPEED_SCALE_3 0.95f
+#define FIXED_MOVE_SPEED_SCALE_4 1.05f
+
+#define FIXED_MOVE_START_PWM_1 180
+#define FIXED_MOVE_START_PWM_2 180
+#define FIXED_MOVE_START_PWM_3 180
+#define FIXED_MOVE_START_PWM_4 180
+
+/* 5 ms control period: 100 ticks = 0.5 s. */
+#define MARKER_ALIGN_TICKS 100
+
+/* Heading hold during fixed-route motion. Reverse the sign if correction worsens drift. */
+#define HEADING_HOLD_KP    2.5f
+#define HEADING_HOLD_KI    2.5f
+#define HEADING_HOLD_KD    0.1f
+#define HEADING_HOLD_LIMIT 100
+#define HEADING_HOLD_I_LIMIT 35.0f
+#define HEADING_HOLD_DEADBAND 0.3f
+#define HEADING_HOLD_SIGN -1
+
+/* Encoder yaw-rate feedforward (200 Hz). Detects wheel-speed asymmetry
+ * immediately and applies correction without waiting for a gyro frame.
+ * Set to 0 to disable and isolate gyro PI behaviour. */
+#define ENC_YAWRATE_GAIN  0.0f
+#define ENC_YAWRATE_LIMIT 30
+
+void LineFollow_Init(void);
+void LineFollow_Run(void);
+void LineFollow_OnTimerElapsed(TIM_HandleTypeDef *htim);
+
+#endif

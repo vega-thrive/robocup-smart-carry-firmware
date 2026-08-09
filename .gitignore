@@ -1,0 +1,29 @@
+# ---- Keil build output (regenerated every compile) ----
+MDK-ARM/BanyunCommonF407/
+MDK-ARM/DebugConfig/
+MDK-ARM/RTE/
+MDK-ARM/EventRecorderStub.scvd
+MDK-ARM/*.axf
+MDK-ARM/*.hex
+MDK-ARM/*.htm
+MDK-ARM/*.lnp
+MDK-ARM/*.map
+MDK-ARM/*.dep
+MDK-ARM/*.lst
+MDK-ARM/*.crf
+MDK-ARM/*.d
+MDK-ARM/*.o
+MDK-ARM/*.iex
+MDK-ARM/*.__i
+MDK-ARM/*_sct.Bak
+MDK-ARM/*.sct
+
+# ---- Keil per-user GUI state ----
+MDK-ARM/*.uvguix.*
+MDK-ARM/*.uvoptx
+
+# ---- Personal tool settings ----
+.claude/
+
+# ---- Manual folder backups (pre-git history) ----
+backup_before_gm65_test_20260726_135936/

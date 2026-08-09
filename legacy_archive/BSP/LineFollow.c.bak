@@ -1,0 +1,392 @@
+#include "LineFollow.h"
+#include "HWT101.h"
+#include <stdio.h>
+
+#define LINE_FOLLOW_STEER_GAIN  17
+#define LINE_FOLLOW_STEER_LIMIT 120
+#define LINE_FOLLOW_KP          0.25f
+#define LINE_FOLLOW_KI          0.03f
+#define LINE_FOLLOW_KD          0.00f
+
+static volatile int wheel_target[5] = {0};
+static int last_steer = 0;
+static uint8_t lcd_div = 0;
+static uint32_t last_heading_frame;
+static volatile int heading_correction;
+static uint16_t marker_align_ticks;
+static float heading_integral;
+static uint32_t last_heading_tick;
+static float last_heading_error;
+static uint8_t heading_error_valid;
+
+typedef enum
+{
+    LINE_MODE_TRACK = 0,
+    LINE_MODE_MARKER_ALIGN,
+    LINE_MODE_MOVE_RIGHT,
+    LINE_MODE_MOVE_BACK,
+    LINE_MODE_FINISHED
+} LineFollowMode;
+
+static volatile LineFollowMode line_mode = LINE_MODE_TRACK;
+
+static void LineFollow_ResetVelocityPid(void)
+{
+    PID_Init(&pid_1_V, LINE_FOLLOW_KP, LINE_FOLLOW_KI, LINE_FOLLOW_KD);
+    PID_Init(&pid_2_V, LINE_FOLLOW_KP, LINE_FOLLOW_KI, LINE_FOLLOW_KD);
+    PID_Init(&pid_3_V, LINE_FOLLOW_KP, LINE_FOLLOW_KI, LINE_FOLLOW_KD);
+    PID_Init(&pid_4_V, LINE_FOLLOW_KP, LINE_FOLLOW_KI, LINE_FOLLOW_KD);
+}
+
+static int LineFollow_GetHeadingCorrection(void)
+{
+    float error;
+    float dt;
+    float derivative = 0.0f;
+    uint32_t now;
+    int correction;
+
+    if (!HWT101_IsReady())
+    {
+        return 0;
+    }
+
+    /* This function is called once per new HWT101 frame, not at 200 Hz. */
+    error = HEADING_HOLD_SIGN * Angle;
+    if ((error > -HEADING_HOLD_DEADBAND) && (error < HEADING_HOLD_DEADBAND))
+    {
+        error = 0.0f;
+    }
+
+    now = HAL_GetTick();
+    dt = (float)(now - last_heading_tick) * 0.001f;
+    if (dt < 0.005f) dt = 0.005f;
+    if (dt > 0.2f) dt = 0.2f;
+    last_heading_tick = now;
+
+    heading_integral += error * dt;
+    if (heading_integral > HEADING_HOLD_I_LIMIT) heading_integral = HEADING_HOLD_I_LIMIT;
+    if (heading_integral < -HEADING_HOLD_I_LIMIT) heading_integral = -HEADING_HOLD_I_LIMIT;
+
+    if (heading_error_valid)
+    {
+        derivative = (error - last_heading_error) / dt;
+    }
+    last_heading_error = error;
+    heading_error_valid = 1;
+
+    correction = (int)(HEADING_HOLD_KP * error +
+                       HEADING_HOLD_KI * heading_integral +
+                       HEADING_HOLD_KD * derivative);
+    if (correction > HEADING_HOLD_LIMIT) correction = HEADING_HOLD_LIMIT;
+    if (correction < -HEADING_HOLD_LIMIT) correction = -HEADING_HOLD_LIMIT;
+    return correction;
+}
+
+static void LineFollow_ResetHeadingPI(void)
+{
+    heading_correction = 0;
+    heading_integral = 0.0f;
+    last_heading_tick = HAL_GetTick();
+    last_heading_frame = HWT101_GetUpdateCount();
+    last_heading_error = 0.0f;
+    heading_error_valid = 0;
+}
+
+/* HWT101 outputs at 10 Hz. Keep the motor loop at 200 Hz, but renew the
+ * heading target only after a genuinely new yaw frame arrives. */
+static int LineFollow_GetFreshHeadingCorrection(void)
+{
+    uint32_t frame = HWT101_GetUpdateCount();
+
+    if ((frame != last_heading_frame) && HWT101_IsReady())
+    {
+        last_heading_frame = frame;
+        heading_correction = LineFollow_GetHeadingCorrection();
+    }
+
+    return heading_correction;
+}
+
+/* Encoder-based yaw-rate detection at 200 Hz. From mecanum kinematics:
+ *   yaw_rate = (-V1 - V2 + V3 + V4) / 4
+ * A non-zero yaw_rate during a lateral/back move means the wheels are
+ * creating unwanted rotation — counteract immediately without waiting
+ * for a gyro frame. */
+static int LineFollow_GetEncoderYawRateCorrection(void)
+{
+    float yaw_rate;
+    int correction;
+
+    yaw_rate = (-velocity[1] - velocity[2] + velocity[3] + velocity[4]) * 0.25f;
+    correction = -(int)(ENC_YAWRATE_GAIN * yaw_rate);
+    if (correction > ENC_YAWRATE_LIMIT)  correction = ENC_YAWRATE_LIMIT;
+    if (correction < -ENC_YAWRATE_LIMIT) correction = -ENC_YAWRATE_LIMIT;
+    return correction;
+}
+
+static void LineFollow_SetRightMoveTarget(int heading_correction)
+{
+    /* Project convention: right shift is (+, -, +, -). */
+    wheel_target[1] = (int)(( RIGHT_MOVE_SPEED - heading_correction) * FIXED_MOVE_SPEED_SCALE_1);
+    wheel_target[2] = (int)((-RIGHT_MOVE_SPEED - heading_correction) * FIXED_MOVE_SPEED_SCALE_2);
+    wheel_target[3] = (int)(( RIGHT_MOVE_SPEED + heading_correction) * FIXED_MOVE_SPEED_SCALE_3);
+    wheel_target[4] = (int)((-RIGHT_MOVE_SPEED + heading_correction) * FIXED_MOVE_SPEED_SCALE_4);
+}
+
+static void LineFollow_SetBackMoveTarget(int heading_correction)
+{
+    wheel_target[1] = (int)((-BACK_MOVE_SPEED - heading_correction) * FIXED_MOVE_SPEED_SCALE_1);
+    wheel_target[2] = (int)((-BACK_MOVE_SPEED - heading_correction) * FIXED_MOVE_SPEED_SCALE_2);
+    wheel_target[3] = (int)((-BACK_MOVE_SPEED + heading_correction) * FIXED_MOVE_SPEED_SCALE_3);
+    wheel_target[4] = (int)((-BACK_MOVE_SPEED + heading_correction) * FIXED_MOVE_SPEED_SCALE_4);
+}
+
+static void LineFollow_ResetEncoder(void)
+{
+    encoder[1] = 0;
+    encoder[2] = 0;
+    encoder[3] = 0;
+    encoder[4] = 0;
+}
+
+static void LineFollow_Stop(void)
+{
+    wheel_target[1] = 0;
+    wheel_target[2] = 0;
+    wheel_target[3] = 0;
+    wheel_target[4] = 0;
+}
+
+/* The incremental velocity PID starts from zero.  This feed-forward makes
+ * every wheel cross its static-friction threshold on the first control tick. */
+static int LineFollow_GetFixedMovePwm(float pid_output, int target, int start_pwm)
+{
+    int pwm = (int)pid_output;
+
+    if (target > 0)
+    {
+        pwm += start_pwm;
+    }
+    else if (target < 0)
+    {
+        pwm -= start_pwm;
+    }
+
+    /* Hardware calibration: negative PWM drives the vehicle forward. */
+    return -pwm;
+}
+
+static void LineFollow_DrawStatus(uint16_t y, const char *text)
+{
+    LCD_DrawString_NoDMA(1, y, "                    ", LCD_WHITE, LCD_BLACK);
+    LCD_DrawString_NoDMA(1, y, text, LCD_WHITE, LCD_BLACK);
+}
+
+void LineFollow_Init(void)
+{
+    LineFollow_ResetVelocityPid();
+    HWT101_UART_Init();
+    LineFollow_ResetHeadingPI();
+    marker_align_ticks = 0;
+
+    HAL_TIM_Base_Start_IT(&htim7);
+    LineFollow_DrawStatus(1, "Line Follow");
+}
+
+void LineFollow_Run(void)
+{
+    uint8_t black_count;
+    int steer;
+    int turn_target;
+    char buf[24];
+
+    if (line_mode == LINE_MODE_MOVE_RIGHT)
+    {
+        if (++lcd_div >= 10)
+        {
+            sprintf(buf, "R:%5ld A:%3d C:%3d", (long)((encoder[1] - encoder[2] + encoder[3] - encoder[4]) / 4),
+                    (int)Angle, heading_correction);
+            LineFollow_DrawStatus(20, buf);
+            sprintf(buf, "Target:%4d", RIGHT_MOVE_DISTANCE);
+            LineFollow_DrawStatus(40, buf);
+            lcd_div = 0;
+        }
+        return;
+    }
+
+    if (line_mode == LINE_MODE_MARKER_ALIGN)
+    {
+        LineFollow_DrawStatus(1, "Marker Align");
+        return;
+    }
+
+    if (line_mode == LINE_MODE_MOVE_BACK)
+    {
+        if (++lcd_div >= 10)
+        {
+            sprintf(buf, "B:%5ld A:%3d C:%3d", (long)(-(encoder[1] + encoder[2] + encoder[3] + encoder[4]) / 4),
+                    (int)Angle, heading_correction);
+            LineFollow_DrawStatus(20, buf);
+            sprintf(buf, "Target:%4d", BACK_MOVE_DISTANCE);
+            LineFollow_DrawStatus(40, buf);
+            lcd_div = 0;
+        }
+        return;
+    }
+
+    if (line_mode == LINE_MODE_FINISHED)
+    {
+        LineFollow_DrawStatus(1, "Route Done");
+        LineFollow_DrawStatus(20, "Stopped");
+        return;
+    }
+
+    Sensor_Get();
+    if (GS_state[1] && GS_state[2] && GS_state[3] && GS_state[4])
+    {
+        /* Marker detected: keep moving straight for 0.5 s before right shift.
+         * Use uniform (unscaled) targets — per-wheel speed scales are only for
+         * lateral moves, not forward alignment. */
+        marker_align_ticks = 0;
+        line_mode = LINE_MODE_MARKER_ALIGN;
+        wheel_target[1] = LINE_FOLLOW_SPEED_TARGET;
+        wheel_target[2] = LINE_FOLLOW_SPEED_TARGET;
+        wheel_target[3] = LINE_FOLLOW_SPEED_TARGET;
+        wheel_target[4] = LINE_FOLLOW_SPEED_TARGET;
+        lcd_div = 0;
+        LineFollow_DrawStatus(1, "Marker Align");
+        return;
+    }
+
+    black_count = GS_state[1] + GS_state[2] + GS_state[3] + GS_state[4]
+                + GS_state[5] + GS_state[6] + GS_state[7] + GS_state[8];
+
+    if (black_count == 0)
+    {
+        steer = last_steer;
+    }
+    else
+    {
+        steer = state * LINE_FOLLOW_STEER_GAIN;
+        last_steer = steer;
+    }
+
+    if (steer > LINE_FOLLOW_STEER_LIMIT) steer = LINE_FOLLOW_STEER_LIMIT;
+    if (steer < -LINE_FOLLOW_STEER_LIMIT) steer = -LINE_FOLLOW_STEER_LIMIT;
+
+    turn_target = (steer * LINE_FOLLOW_TURN_TARGET) / LINE_FOLLOW_STEER_GAIN;
+    if (turn_target > LINE_FOLLOW_TURN_LIMIT) turn_target = LINE_FOLLOW_TURN_LIMIT;
+    if (turn_target < -LINE_FOLLOW_TURN_LIMIT) turn_target = -LINE_FOLLOW_TURN_LIMIT;
+
+    /* Vx + Vw: heading correction without lateral translation. */
+    wheel_target[1] = LINE_FOLLOW_SPEED_TARGET + turn_target;
+    wheel_target[2] = LINE_FOLLOW_SPEED_TARGET + turn_target;
+    wheel_target[3] = LINE_FOLLOW_SPEED_TARGET - turn_target;
+    wheel_target[4] = LINE_FOLLOW_SPEED_TARGET - turn_target;
+
+    if (++lcd_div >= 10)
+    {
+        sprintf(buf, "S:%2d W:%3d", state, turn_target);
+        LineFollow_DrawStatus(20, buf);
+        sprintf(buf, "T:%3d V:%3d", wheel_target[1], velocity[1]);
+        LineFollow_DrawStatus(40, buf);
+        lcd_div = 0;
+    }
+}
+
+void LineFollow_OnTimerElapsed(TIM_HandleTypeDef *htim)
+{
+    if (htim->Instance != TIM7)
+    {
+        return;
+    }
+
+    Move_Velocity();
+
+    if (line_mode == LINE_MODE_FINISHED)
+    {
+        Move_Control(0, 0, 0, 0);
+        return;
+    }
+
+    if (line_mode == LINE_MODE_MARKER_ALIGN)
+    {
+        if (++marker_align_ticks >= MARKER_ALIGN_TICKS)
+        {
+            LineFollow_ResetEncoder();
+            LineFollow_ResetVelocityPid();
+            HWT101_getAngle_Reset();
+            LineFollow_ResetHeadingPI();
+            line_mode = LINE_MODE_MOVE_RIGHT;
+            LineFollow_SetRightMoveTarget(0);
+            lcd_div = 0;
+        }
+    }
+
+    if (line_mode == LINE_MODE_MOVE_RIGHT)
+    {
+        int right_distance;
+        int combined_correction;
+
+        Move_Encoder();
+        right_distance = (encoder[1] - encoder[2] + encoder[3] - encoder[4]) / 4;
+        if (right_distance >= RIGHT_MOVE_DISTANCE)
+        {
+            LineFollow_ResetEncoder();
+            LineFollow_ResetVelocityPid();
+            LineFollow_ResetHeadingPI();
+            line_mode = LINE_MODE_MOVE_BACK;
+            LineFollow_SetBackMoveTarget(0);
+            Move_Control(0, 0, 0, 0);
+            return;
+        }
+
+        combined_correction = LineFollow_GetFreshHeadingCorrection()
+                            + LineFollow_GetEncoderYawRateCorrection();
+        LineFollow_SetRightMoveTarget(combined_correction);
+    }
+
+    if (line_mode == LINE_MODE_MOVE_BACK)
+    {
+        int back_distance;
+        int combined_correction;
+
+        Move_Encoder();
+        back_distance = -(encoder[1] + encoder[2] + encoder[3] + encoder[4]) / 4;
+        if (back_distance >= BACK_MOVE_DISTANCE)
+        {
+            LineFollow_Stop();
+            line_mode = LINE_MODE_FINISHED;
+            Move_Control(0, 0, 0, 0);
+            return;
+        }
+
+        combined_correction = LineFollow_GetFreshHeadingCorrection()
+                            + LineFollow_GetEncoderYawRateCorrection();
+        LineFollow_SetBackMoveTarget(combined_correction);
+    }
+
+    PID_calc_V(&pid_1_V, wheel_target[1], velocity[1], 0);
+    PID_calc_V(&pid_2_V, wheel_target[2], velocity[2], 0);
+    PID_calc_V(&pid_3_V, wheel_target[3], velocity[3], 0);
+    PID_calc_V(&pid_4_V, wheel_target[4], velocity[4], 0);
+
+    if ((line_mode == LINE_MODE_MARKER_ALIGN) ||
+        (line_mode == LINE_MODE_MOVE_RIGHT) ||
+        (line_mode == LINE_MODE_MOVE_BACK))
+    {
+        Move_Control(LineFollow_GetFixedMovePwm(pid_1_V.output, wheel_target[1], FIXED_MOVE_START_PWM_1),
+                     LineFollow_GetFixedMovePwm(pid_2_V.output, wheel_target[2], FIXED_MOVE_START_PWM_2),
+                     LineFollow_GetFixedMovePwm(pid_3_V.output, wheel_target[3], FIXED_MOVE_START_PWM_3),
+                     LineFollow_GetFixedMovePwm(pid_4_V.output, wheel_target[4], FIXED_MOVE_START_PWM_4));
+    }
+    else
+    {
+        /* Hardware calibration: negative PWM drives the vehicle forward. */
+        Move_Control(-(int)pid_1_V.output,
+                     -(int)pid_2_V.output,
+                     -(int)pid_3_V.output,
+                     -(int)pid_4_V.output);
+    }
+}
