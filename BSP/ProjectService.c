@@ -135,6 +135,28 @@ void ProjectService_Run(void)
             HWT101_getAngle_Reset();
             HeadingHold_Reset();
             LineFollow_Stop();
+            /* 对准完成后固定航向直进 3cm, 再执行 vision_next_mode 位移 */
+            ChassisPos_Start(VISION_FORWARD_DISTANCE, VISION_FORWARD_DISTANCE,
+                             VISION_FORWARD_DISTANCE, VISION_FORWARD_DISTANCE);
+            __disable_irq();
+            route_state = ROUTE_VISION_FORWARD;
+            __enable_irq();
+            mode_entry_tick = 0;
+            lcd_div = 0;
+            vision_started = 0U;
+            ChassisPos_DrawStatus(1, "Fwd 3cm");
+        }
+        return;
+    }
+
+    if (route_state == ROUTE_VISION_FORWARD)
+    {
+        if (ChassisPos_Update(VISION_FORWARD_SPEED, 0,
+              HeadingHold_GetFreshCorrection()))
+        {
+            ChassisPos_ResetEncoder();
+            ChassisPos_ResetVelocityPid();
+            LineFollow_Stop();
             if (vision_next_mode == ROUTE_REAR_ALIGN)
             {
                 ChassisPos_Start(-46250, 46250, -46250, 46250);
@@ -155,7 +177,6 @@ void ProjectService_Run(void)
             __enable_irq();
             mode_entry_tick = 0;
             lcd_div = 0;
-            vision_started = 0U;
             ChassisPos_DrawStatus(1, "Route Resume");
         }
         return;
@@ -622,6 +643,7 @@ void ProjectService_OnTimerElapsed(TIM_HandleTypeDef *htim)
             ChassisPos_ResetVelocityPid();
             HWT101_getAngle_Reset();
             HeadingHold_Reset();
+            Servo4_RotationUnlock();  /* 90°旋转完成, 解除锁死 */
             ChassisPos_Start(CURVE_ENCODER_COUNTS, CURVE_ENCODER_COUNTS,
                             CURVE_ENCODER_COUNTS, CURVE_ENCODER_COUNTS);
             route_state = ROUTE_CURVE;
@@ -1253,6 +1275,7 @@ void ProjectService_OnTimerElapsed(TIM_HandleTypeDef *htim)
         {
             LineFollow_Stop();
             ChassisPos_ResetVelocityPid();
+            Servo4_RotationLockNow();  /* 灰度识别到十字: 90°旋转前锁死转盘防物块掉落 */
             mode_entry_tick = 1;
         }
         else

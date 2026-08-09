@@ -3,7 +3,7 @@
 
 #include "main.h"
 
-/* 比赛路线状态机，18个状态 */
+/* 比赛路线状态机，19个状态 */
 typedef enum
 {
     ROUTE_HOME_LAUNCH = 0,
@@ -27,7 +27,8 @@ typedef enum
     ROUTE_FINAL_LEFT_40,
     ROUTE_FINAL_ROTATE_180,
     ROUTE_PAUSE_GENERIC,
-    ROUTE_VISION_ALIGN
+    ROUTE_VISION_ALIGN,
+    ROUTE_VISION_FORWARD
 } RouteState;
 
 void ProjectService_Init(void);

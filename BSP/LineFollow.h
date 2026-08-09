@@ -74,21 +74,27 @@
 #define TROPHY_DETECT_ARM_COUNTS 22000U
 
 /* Rotate 90° CW in place before the diagonal move.  Done in the simple
- * line-follow area to avoid false cross triggers later. */
-#define ROTATE_90_SPEED        372
+ * line-follow area to avoid false cross triggers later.
+ * 速度取第一次巡线水平(TRACK_FIRST=230)放慢. */
+#define ROTATE_90_SPEED        230
 #define ROTATE_90_TARGET_ANGLE  90.0f
 
 /* Forward-right ~10° diagonal after the 90° rotation.
- * 55 cm × 1850 counts/cm ≈ 101750. */
-#define CURVE_FORWARD_SPEED   445
-#define CURVE_RIGHT_SPEED      91
+ * 55 cm × 1850 counts/cm ≈ 101750.
+ * 速度放慢到第一次巡线水平, 右偏量按 91/445 比例缩放保持 ~10° 方向. */
+#define CURVE_FORWARD_SPEED   230
+#define CURVE_RIGHT_SPEED      47
 #define CURVE_ENCODER_COUNTS 81955
 
-/* 后对准一: 视觉对准完成后左移2.5cm(46250 counts, 由视觉完成分支预置),
+/* 视觉对准完成后: 固定航向直进 3cm (5550 counts), 再执行 vision_next_mode 位移 */
+#define VISION_FORWARD_SPEED     300
+#define VISION_FORWARD_DISTANCE 5550   /* 3 cm × 1850 counts/cm */
+
+/* 后对准一: 视觉对准+直进3cm完成后左移2.5cm(46250 counts, 由直进完成分支预置),
  * 到位后前进40cm(74000 counts). 纯编码器定位, 不再用后八路灰度. */
 #define REAR_ALIGN_LEFT_SPEED   300
 
-/* 后对准二: 视觉对准完成后后退30cm(54964 counts, 预置), 再左移8.5cm
+/* 后对准二: 视觉对准+直进3cm完成后后退30cm(54964 counts, 预置), 再左移8.5cm
  * (157250 counts); 左移期间前八路灰度检测到十字交叉线(GS3/GS4)可提前退出. */
 #define REAR_ALIGN_2_LEFT_SPEED  432
 #define REAR_ALIGN_2_BACK_SPEED  151
