@@ -153,7 +153,7 @@ int main(void)
                          LCD_WHITE, LCD_BLACK);
     LCD_DrawString_NoDMA(1, 80, "CAMERA BOOT 4S  ",
                          LCD_GREEN, LCD_BLACK);
-    LCD_DrawString_NoDMA(1, 120, "CH3: 780 us",
+    LCD_DrawString_NoDMA(1, 120, "CH2: 850 us",
                          LCD_WHITE, LCD_BLACK);
     LCD_DrawString_NoDMA(1, 200, color_count_text,
                          LCD_GREEN, LCD_BLACK);
