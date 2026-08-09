@@ -8,9 +8,9 @@
 
 #define SERVO4_FRAME_US 20000U
 
-/* CH2 旋转舵机: 900us=零点, 每步 +400us (约 72°), 共 0~4 五个档位 */
+/* CH2 旋转舵机: 840us=零点, 每步 +400us (约 72°), 共 0~4 五个档位 */
 #define ROTATION_SERVO_CHANNEL       2U
-#define ROTATION_SERVO_HOME_US     900U
+#define ROTATION_SERVO_HOME_US     840U
 #define ROTATION_SERVO_STEP_US     400U
 #define ROTATION_SERVO_MAX_STEP      4U
 
