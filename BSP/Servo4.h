@@ -36,6 +36,8 @@ void Servo4_UseTask2Parameters(void);
 /* 旋转舵机 CH2 */
 void Servo4_RotationHome(void);
 void Servo4_RotationSetStep(uint8_t step);
+void Servo4_RotationLockNow(void);
+void Servo4_RotationUnlock(void);
 
 /* 小舵机 CH3~CH7 全开/全合 */
 void Servo4_LittleAllOpen(void);

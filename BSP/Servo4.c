@@ -39,6 +39,9 @@ static uint16_t servo4_frame_pulse[SERVO4_CHANNEL_COUNT];
 static uint16_t servo4_elapsed_us;
 static uint8_t servo4_frame_start;
 
+/* CH2 锁死状态 (灰度识别到十字后、90°旋转前 PWM -200, 旋转完解锁) */
+static uint16_t rotation_pre_lock_us;
+
 static void Servo4_PinWrite(uint8_t channel, GPIO_PinState state)
 {
     HAL_GPIO_WritePin(servo4_pins[channel].port,
@@ -194,6 +197,7 @@ void Servo4_UseTask2Parameters(void)
 
 void Servo4_RotationHome(void)
 {
+    rotation_pre_lock_us = 0U;  /* 回零清锁死状态 */
     Servo4_SetPulse(ROTATION_SERVO_CHANNEL, ROTATION_SERVO_HOME_US);
 }
 
@@ -203,6 +207,33 @@ void Servo4_RotationSetStep(uint8_t step)
     Servo4_SetPulse(ROTATION_SERVO_CHANNEL,
                     (uint16_t)(ROTATION_SERVO_HOME_US
                                + ROTATION_SERVO_STEP_US * step));
+}
+
+/* CH2 锁死: 灰度识别到十字后、90°旋转前 PWM 减 200us 卡住物块防掉落;
+ * 旋转完成后 Unlock 恢复锁死前的 PWM. */
+#define ROTATION_LOCK_DELTA_US  200U
+
+void Servo4_RotationLockNow(void)
+{
+    uint16_t cur;
+
+    if (rotation_pre_lock_us != 0U) return;  /* 已锁死, 不重复 */
+    cur = servo4_pulse[ROTATION_SERVO_CHANNEL];
+    if (cur > (SERVO4_MIN_US + ROTATION_LOCK_DELTA_US))
+    {
+        rotation_pre_lock_us = cur;
+        Servo4_SetPulse(ROTATION_SERVO_CHANNEL,
+                        (uint16_t)(cur - ROTATION_LOCK_DELTA_US));
+    }
+}
+
+void Servo4_RotationUnlock(void)
+{
+    if (rotation_pre_lock_us != 0U)
+    {
+        Servo4_SetPulse(ROTATION_SERVO_CHANNEL, rotation_pre_lock_us);
+        rotation_pre_lock_us = 0U;
+    }
 }
 
 /* 小爪子通道: CH3~CH7 (PA5/PA6/PA7/PC4/PC5) */
