@@ -14,7 +14,6 @@
 #define POS_BAD_SAMPLE_LIMIT         3
 #define POS_STALL_DELTA_LIMIT        4
 #define POS_STALL_TICKS            150
-#define POS_TIMEOUT_MS           20000U
 
 extern volatile uint8_t pos_control_active;
 extern uint8_t pos_fault;

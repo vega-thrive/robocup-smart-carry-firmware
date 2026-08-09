@@ -7,7 +7,7 @@
  * ================================================================ */
 
 #define SERVO_RANGE_TEST_MODE   0   /* CH2 舵机量程扫描测试 */
-#define COLOR_SERVO_TEST_MODE   0   /* 转盘颜色识别测试: 上电CH2 550us, 识别到色块转一档 */
+#define COLOR_SERVO_TEST_MODE   0   /* 转盘颜色识别测试: 上电CH2 850us, 识别到色块转一档 */
 #define SERVO_CHANNEL_TEST_MODE 0   /* CH2 固定脉宽测试 */
 #define TASK1_ROUTE_TEST_MODE   0   /* 仅跑任务1路段, 任务2扫码点停车 */
 

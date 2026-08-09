@@ -653,10 +653,10 @@ void ProjectService_OnTimerElapsed(TIM_HandleTypeDef *htim)
         else
         {
             int spd = ROTATE_90_SPEED;
-            /* 接近目标时线性减速: 剩余角度>70°全速372, 每多1°降13.6, 最低80 */
+            /* 接近目标时线性减速: 转过70°后每多1°降7.5, 90°时降到80 */
             if (a > 70.0f)
             {
-                spd = 372 - (int)((a - 70.0f) * 13.6f);
+                spd = ROTATE_90_SPEED - (int)((a - 70.0f) * 7.5f);
                 if (spd < 80) spd = 80;
             }
             wheel_target[1] =  spd;
@@ -692,7 +692,8 @@ void ProjectService_OnTimerElapsed(TIM_HandleTypeDef *htim)
                 cross_marker_ticks = 0;
                 {
                     int right = (int)((long)CURVE_ENCODER_COUNTS
-                                    * CURVE_RIGHT_SPEED / CURVE_FORWARD_SPEED);
+                                    * CURVE_RIGHT_SPEED / CURVE_FORWARD_SPEED)
+                                + CURVE_RIGHT_EXTRA_COUNTS;
                     ChassisPos_Start(right, -right, -right, right);
                 }
                 ChassisPos_DrawStatus(1, "Right");
@@ -700,7 +701,7 @@ void ProjectService_OnTimerElapsed(TIM_HandleTypeDef *htim)
         }
         else
         {
-            if (ChassisPos_Update(0, CURVE_RIGHT_SPEED,
+            if (ChassisPos_Update(0, CURVE_RIGHT_MOVE_SPEED,
                   HeadingHold_GetFreshCorrection()))
             {
                 ChassisPos_ResetVelocityPid();

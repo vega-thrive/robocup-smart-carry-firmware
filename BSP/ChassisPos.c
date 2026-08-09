@@ -15,7 +15,6 @@ static uint8_t pos_skip_first_sample;
 static uint8_t pos_bad_sample_ticks;
 static uint16_t pos_stall_ticks;
 static uint16_t pos_stall_grace;
-static uint32_t pos_started_ms;
 volatile int debug_trap_speed;
 volatile int debug_trap_position;
 volatile int debug_trap_error;
@@ -47,7 +46,6 @@ void ChassisPos_Start(int t1, int t2, int t3, int t4)
     pos_bad_sample_ticks = 0U;
     pos_stall_ticks = 0U;
     pos_stall_grace = 50U;
-    pos_started_ms = HAL_GetTick();
     pos_fault = 0U;
     ChassisMotor_ResetEncoders();
     pos_control_active = 1U;
@@ -72,11 +70,6 @@ uint8_t ChassisPos_Update(int max_fwd, int max_left, int hc)
     if (pos_fault)
     {
         LineFollow_Stop();
-        return 0U;
-    }
-    if ((HAL_GetTick() - pos_started_ms) >= POS_TIMEOUT_MS)
-    {
-        PositionFault("POS TIMEOUT");
         return 0U;
     }
 

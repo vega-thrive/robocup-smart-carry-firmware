@@ -81,10 +81,13 @@
 
 /* Forward-right ~10° diagonal after the 90° rotation.
  * 55 cm × 1850 counts/cm ≈ 101750.
- * 速度放慢到第一次巡线水平, 右偏量按 91/445 比例缩放保持 ~10° 方向. */
-#define CURVE_FORWARD_SPEED   230
-#define CURVE_RIGHT_SPEED      47
-#define CURVE_ENCODER_COUNTS 81955
+ * 速度放慢到第一次巡线水平, 右偏量按 91/445 比例缩放保持 ~10° 方向.
+ * 前向完成后右移: 基础量 + CURVE_RIGHT_EXTRA_COUNTS. */
+#define CURVE_FORWARD_SPEED        230
+#define CURVE_RIGHT_SPEED           47
+#define CURVE_RIGHT_MOVE_SPEED     150  /* 右移段速度上限: 13.9cm 需约 8.6s */
+#define CURVE_ENCODER_COUNTS      81955
+#define CURVE_RIGHT_EXTRA_COUNTS 240500  /* 右移额外 +13cm (13 × 18500 counts/cm) */
 
 /* 视觉对准完成后: 固定航向直进 3cm (5550 counts), 再执行 vision_next_mode 位移 */
 #define VISION_FORWARD_SPEED     300
