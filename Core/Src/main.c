@@ -222,12 +222,12 @@ int main(void)
         HAL_Delay(10);
     }
 #elif SERVO_CHANNEL_TEST_MODE
-    /* Test only CH3/PA4. Servo4_Init leaves every other channel at PWM off. */
+    /* 仅 CH2/PA4 输出固定脉宽, 其余 7 通道 PWM off, 底盘不初始化. */
     Servo4_Init();
     Servo4_SetPulse(2U, SERVO_TEST_LOW_US);
-    LCD_DrawString_NoDMA(1, 40, "ROTATE SERVO CH3",
+    LCD_DrawString_NoDMA(1, 40, "ROTATE SERVO CH2",
                          LCD_WHITE, LCD_BLACK);
-    LCD_DrawString_NoDMA(1, 80, "PA4: 1400/1600 us",
+    LCD_DrawString_NoDMA(1, 80, "PA4: 500us FIXED",
                          LCD_GREEN, LCD_BLACK);
     LCD_DrawString_NoDMA(1, 120, "OTHER PWM OFF",
                          LCD_WHITE, LCD_BLACK);
@@ -236,9 +236,7 @@ int main(void)
     while (1)
     {
         Servo4_SetPulse(2U, SERVO_TEST_LOW_US);
-        HAL_Delay(3000);
-        Servo4_SetPulse(2U, SERVO_TEST_HIGH_US);
-        HAL_Delay(3000);
+        HAL_Delay(10);
     }
 #else
     /* Init Servo (TIM9 software PWM) */

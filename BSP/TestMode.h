@@ -17,7 +17,7 @@
 #define COLOR_SERVO_STEP_US   400U  /* 72 degrees on the measured 360-degree servo */
 #define COLOR_CAMERA_BOOT_MS  4000U
 
-#define SERVO_TEST_LOW_US       1400U
-#define SERVO_TEST_HIGH_US      1600U
+#define SERVO_TEST_LOW_US       500U
+#define SERVO_TEST_HIGH_US      1600U  /* 仅量程扫描模式使用 */
 
 #endif
