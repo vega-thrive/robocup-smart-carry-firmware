@@ -17,8 +17,6 @@ static uint8_t active;
 static uint8_t count;
 static uint8_t seen[TASK1_COLOR_COUNT];
 static uint32_t last_sequence;
-volatile uint8_t task1_color_prepare_pending;
-volatile uint8_t task1_color_start_pending;
 
 static uint8_t ColorToIndex(uint8_t code)
 {
@@ -70,19 +68,5 @@ void Task1Color_Process(void)
     {
         active = 0U;
         (void)MaxiCam_SetMode(MAXICAM_MODE_CIRCLE);
-    }
-}
-
-void Task1Color_ServiceCommands(void)
-{
-    if (task1_color_prepare_pending)
-    {
-        task1_color_prepare_pending = 0U;
-        (void)MaxiCam_SetMode(MAXICAM_MODE_STOP);
-    }
-    if (task1_color_start_pending)
-    {
-        task1_color_start_pending = 0U;
-        Task1Color_Start();
     }
 }

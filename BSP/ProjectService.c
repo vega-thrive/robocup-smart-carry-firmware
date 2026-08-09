@@ -7,12 +7,8 @@
 #include "Servo4.h"
 #include "VisionAlignment.h"
 #include "MaxiCam.h"
+#include "TestMode.h"
 #include <stdio.h>
-
-/* 任务1路段测试: 1 = 完整跑任务1路段(出发→循迹→对准→中段运动),
- * 到达任务2扫码点(FINAL_LEFT_40 第一次左移完成)自动停车, 不进入任务2.
- * 0 = 完整比赛流程(含任务2奖杯抓取). */
-#define TASK1_ROUTE_TEST_MODE 0
 
 /* ---- 状态变量 ---- */
 static volatile uint8_t task1_route_test_done;
@@ -106,7 +102,6 @@ void ProjectService_Run(void)
     char buf[24];
 
     ChassisPos_FlushDisplay();
-    Task1Color_ServiceCommands();
     Task1Color_Process();
 
     if (task1_route_test_done)
