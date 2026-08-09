@@ -319,7 +319,7 @@ void ProjectService_Run(void)
     {
         if (++lcd_div >= 5)
         {
-            sprintf(buf, "Rot69 A:%3d", (int)Angle);
+            sprintf(buf, "Rot30 A:%3d", (int)Angle);
             ChassisPos_DrawStatus(20, buf);
             lcd_div = 0;
         }
@@ -1228,7 +1228,7 @@ void ProjectService_OnTimerElapsed(TIM_HandleTypeDef *htim)
 
     if (route_state == ROUTE_TRACK_FIRST)
     {
-        int i, black_count, line_state, turn_target;
+        int i, black_count, line_state = 0, turn_target;
         Sensor_Get();
 
         if (mode_entry_tick > 0)
@@ -1278,7 +1278,7 @@ void ProjectService_OnTimerElapsed(TIM_HandleTypeDef *htim)
 
     if (route_state == ROUTE_TRACK_RETURN)
     {
-        int i, black_count, line_state, turn_target;
+        int i, black_count, line_state = 0, turn_target;
         Sensor_Get();
 
         /* Rear 4 sensors (5-8) all on black + suppression expired → TROPHY */
