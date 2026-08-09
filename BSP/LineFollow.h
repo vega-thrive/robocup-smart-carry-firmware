@@ -84,15 +84,12 @@
 #define CURVE_RIGHT_SPEED      91
 #define CURVE_ENCODER_COUNTS 81955
 
-/* Rear alignment: after cross stop, move left-backward until
- * at least 5 of 8 rear grayscale sensors detect the black line.
- * 60° back-primary, left-secondary: BACK/LEFT ≈ 1.74 ≈ tan(60°). */
+/* 后对准一: 视觉对准完成后左移2.5cm(46250 counts, 由视觉完成分支预置),
+ * 到位后前进40cm(74000 counts). 纯编码器定位, 不再用后八路灰度. */
 #define REAR_ALIGN_LEFT_SPEED   300
-#define REAR_ALIGN_BACK_SPEED   312
-#define REAR_ALIGN_BLACK_COUNT   5
 
-/* Second rear-alignment: left-primary, back-secondary at ~60°.
- * Encoder-based exit after REAR_ALIGN_2_DISTANCE counts. */
+/* 后对准二: 视觉对准完成后后退30cm(54964 counts, 预置), 再左移8.5cm
+ * (157250 counts); 左移期间前八路灰度检测到十字交叉线(GS3/GS4)可提前退出. */
 #define REAR_ALIGN_2_LEFT_SPEED  432
 #define REAR_ALIGN_2_BACK_SPEED  151
 #define REAR_ALIGN_2_DISTANCE   157250  /* 8.5 cm lateral */

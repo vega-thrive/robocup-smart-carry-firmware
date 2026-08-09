@@ -138,7 +138,7 @@ void ProjectService_Run(void)
             if (vision_next_mode == ROUTE_REAR_ALIGN)
             {
                 ChassisPos_Start(-46250, 46250, -46250, 46250);
-                ChassisPos_DrawStatus(1, "Left 25cm");
+                ChassisPos_DrawStatus(1, "Left 2.5cm");
             }
             else if (vision_next_mode == ROUTE_REAR_ALIGN_2)
             {
@@ -437,6 +437,7 @@ void ProjectService_OnTimerElapsed(TIM_HandleTypeDef *htim)
     }
 
     ChassisMotor_SampleEncoders();
+    ChassisMotor_IntegrateEncoders();
 
     if (task1_route_test_done)
     {
@@ -757,7 +758,7 @@ void ProjectService_OnTimerElapsed(TIM_HandleTypeDef *htim)
                 mode_entry_tick = 1;
                 ChassisPos_Start(-REAR_ALIGN_2_DISTANCE,  REAR_ALIGN_2_DISTANCE,
                                 -REAR_ALIGN_2_DISTANCE,  REAR_ALIGN_2_DISTANCE);
-                ChassisPos_DrawStatus(1, "Left 85cm");
+                ChassisPos_DrawStatus(1, "Left 8.5cm");
             }
         }
         else
