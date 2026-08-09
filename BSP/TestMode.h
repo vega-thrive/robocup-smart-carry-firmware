@@ -13,7 +13,7 @@
 
 /* ---- 测试分支专用常量 (仅对应测试模式生效) ---- */
 #define COLOR_SERVO_CHANNEL     2U
-#define COLOR_SERVO_HOME_US   500U
+#define COLOR_SERVO_HOME_US   600U
 #define COLOR_SERVO_STEP_US   400U  /* 72 degrees on the measured 360-degree servo */
 #define COLOR_CAMERA_BOOT_MS  4000U
 
