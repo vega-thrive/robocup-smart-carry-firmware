@@ -317,7 +317,7 @@ void ProjectService_Run(void)
         return;
     }
 
-    if (route_state == ROUTE_FINAL_ROTATE_69)
+    if (route_state == ROUTE_FINAL_ROTATE_30)
     {
         if (++lcd_div >= 5)
         {
@@ -340,7 +340,7 @@ void ProjectService_Run(void)
         return;
     }
 
-    if (route_state == ROUTE_FINAL_ROTATE_30)
+    if (route_state == ROUTE_FINAL_ROTATE_ALIGN)
     {
         if (++lcd_div >= 5)
         {
@@ -849,7 +849,7 @@ void ProjectService_OnTimerElapsed(TIM_HandleTypeDef *htim)
                   HeadingHold_GetFreshCorrection()))
             {
                 LineFollow_Stop();
-                vision_next_mode = ROUTE_FINAL_ROTATE_69;
+                vision_next_mode = ROUTE_FINAL_ROTATE_30;
                 vision_started = 0U;
                 pause_next_mode = ROUTE_VISION_ALIGN;
                 route_state = ROUTE_PAUSE_GENERIC;
@@ -862,11 +862,11 @@ void ProjectService_OnTimerElapsed(TIM_HandleTypeDef *htim)
         }
     }
 
-    if (route_state == ROUTE_FINAL_ROTATE_69)
+    if (route_state == ROUTE_FINAL_ROTATE_30)
     {
         float a = Angle;
         if (a < 0.0f) a = -a;
-        if (a >= FINAL_ROTATE_69_ANGLE)
+        if (a >= FINAL_ROTATE_30_ANGLE)
         {
             LineFollow_Stop();
             pause_next_mode = ROUTE_FINAL_FORWARD_2;
@@ -877,10 +877,10 @@ void ProjectService_OnTimerElapsed(TIM_HandleTypeDef *htim)
         }
         else
         {
-            wheel_target[1] =  FINAL_ROTATE_69_SPEED;
-            wheel_target[2] =  FINAL_ROTATE_69_SPEED;
-            wheel_target[3] = -FINAL_ROTATE_69_SPEED;
-            wheel_target[4] = -FINAL_ROTATE_69_SPEED;
+            wheel_target[1] =  FINAL_ROTATE_30_SPEED;
+            wheel_target[2] =  FINAL_ROTATE_30_SPEED;
+            wheel_target[3] = -FINAL_ROTATE_30_SPEED;
+            wheel_target[4] = -FINAL_ROTATE_30_SPEED;
         }
     }
 
@@ -890,7 +890,7 @@ void ProjectService_OnTimerElapsed(TIM_HandleTypeDef *htim)
               HeadingHold_GetFreshCorrection()))
         {
             LineFollow_Stop();
-            vision_next_mode = ROUTE_FINAL_ROTATE_30;
+            vision_next_mode = ROUTE_FINAL_ROTATE_ALIGN;
             vision_started = 0U;
             pause_next_mode = ROUTE_VISION_ALIGN;
             route_state = ROUTE_PAUSE_GENERIC;
@@ -902,7 +902,7 @@ void ProjectService_OnTimerElapsed(TIM_HandleTypeDef *htim)
         }
     }
 
-    if (route_state == ROUTE_FINAL_ROTATE_30)
+    if (route_state == ROUTE_FINAL_ROTATE_ALIGN)
     {
         float error_ccw;
         float error_abs;
@@ -940,7 +940,7 @@ void ProjectService_OnTimerElapsed(TIM_HandleTypeDef *htim)
             {
                 final_left_heading_stable_ticks = 0;
 
-                if (error_abs > 15.0f)      rotate_speed = FINAL_ROTATE_30_SPEED;
+                if (error_abs > 15.0f)      rotate_speed = FINAL_ROTATE_ALIGN_SPEED;
                 else if (error_abs > 6.0f)  rotate_speed = 264;
                 else                        rotate_speed = 168;
 
@@ -1013,13 +1013,13 @@ void ProjectService_OnTimerElapsed(TIM_HandleTypeDef *htim)
             HeadingHold_Reset();
             switch (pause_next_mode)
             {
-                case ROUTE_FINAL_ROTATE_69:
+                case ROUTE_FINAL_ROTATE_30:
                     ChassisPos_ResetEncoder();
                     ChassisPos_DrawStatus(1, "Rotate 55 CW"); break;
                 case ROUTE_FINAL_FORWARD_2:
                     ChassisPos_Start(55500, 55500, 55500, 55500);
                     ChassisPos_DrawStatus(1, "Final Fwd 2"); break;
-                case ROUTE_FINAL_ROTATE_30:
+                case ROUTE_FINAL_ROTATE_ALIGN:
                     ChassisPos_ResetEncoder();
                     ChassisPos_DrawStatus(1, "Rotate 30 CW"); break;
                 case ROUTE_FINAL_LEFT_40:

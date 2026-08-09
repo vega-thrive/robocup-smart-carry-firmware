@@ -108,14 +108,14 @@
 #define FINAL_LF_DISTANCE     55500   /* 30 cm × 1850 */
 
 
-/* Final rotate 55° CW, then forward 30 cm. */
-#define FINAL_ROTATE_69_SPEED   372
-#define FINAL_ROTATE_69_ANGLE    30.0f
+/* Final rotate 30° CW, then forward 30 cm. */
+#define FINAL_ROTATE_30_SPEED   372
+#define FINAL_ROTATE_30_ANGLE    30.0f
 #define FINAL_FORWARD_2_SPEED    420
 
 /* Align to the saved left heading, move left 14.5 cm, then rotate 179° CW. */
 #define PAUSE_GENERIC_TICKS      100   /* 0.5 s */
-#define FINAL_ROTATE_30_SPEED   372
+#define FINAL_ROTATE_ALIGN_SPEED 372
 #define FINAL_LEFT_40_SPEED     420
 #define FINAL_ROTATE_180_SPEED  372
 #define FINAL_ROTATE_180_ANGLE  179.0f
