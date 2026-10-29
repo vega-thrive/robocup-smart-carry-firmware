@@ -7,6 +7,8 @@
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
 > 2026 中国机器人大赛暨 RoboCup 中国赛 · 工程竞技类 · **车型智能搬运**赛项
+> **国赛三等奖 · 专项赛三等奖**
+>
 > 四轮麦克纳姆轮底盘固件：三环 PID 运动控制 + 24 状态比赛路线状态机 + UART 视觉伺服对准 + 8 路舵机机构时序。
 
 ---
@@ -242,6 +244,8 @@ MaixCAM 通过 UART4 回传目标坐标，`VisionAlignment.c` 做**非阻塞同�
 比赛程序是在队伍既有工程的基础上迭代而来：本人在接手一队车辆后，完成控制算法重构、参数标定与全流程调试，本仓库的提交历史即为这一过程。
 
 视觉端基础工程由学长 **mtc** 编写、后由本人接手迭代，见配套仓库 [`robocup-smart-carry-vision`](https://github.com/vega-thrive/robocup-smart-carry-vision)；机械结构与硬件电路由队伍其他成员完成。
+
+同一赛项的另一辆车（二队）是**从零独立实现**的另一套固件，53 状态 / 12 336 行，见 [`robocup-smart-carry-firmware-team2`](https://github.com/vega-thrive/robocup-smart-carry-firmware-team2)。两套代码不存在复用关系。
 
 ## License
 
