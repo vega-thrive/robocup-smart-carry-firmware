@@ -238,6 +238,50 @@ int main(void)
         Servo4_SetPulse(2U, SERVO_TEST_LOW_US);
         HAL_Delay(10);
     }
+#elif ENCODER_ROUTE_TEST_MODE
+    /* 编码器定距专项测试: 从 ROTATE_90 开始, 跑完所有编码器运动段
+     * 到 FINAL_LEFT_40 停车. 跳过视觉对准/扫码/颜色识别/巡线,
+     * 摄像头在充电时可用. */
+    Servo4_Init();
+    ChassisMotor_Init(0.62f, 0.06f, 0.00f);
+    LineFollow_Init();
+    HWT101_UART_Init();
+    HeadingHold_Init();
+    HWT101_getAngle_Reset();
+    HeadingHold_Reset();
+    ChassisPos_ResetEncoder();
+    ChassisPos_ResetVelocityPid();
+
+    LCD_DrawString_NoDMA(1, 40, "ENCODER ROUTE TEST",
+                         LCD_WHITE, LCD_BLACK);
+    LCD_DrawString_NoDMA(1, 80, "ROTATE90->FINAL LEFT40",
+                         LCD_GREEN, LCD_BLACK);
+    LCD_DrawString_NoDMA(1, 120, "VISION SKIP ON",
+                         LCD_GREEN, LCD_BLACK);
+    LCD_DrawString_NoDMA(1, 160, "Press BTN to Start",
+                         LCD_WHITE, LCD_BLACK);
+
+    while (HAL_GPIO_ReadPin(START_BTN_GPIO_Port, START_BTN_Pin) != GPIO_PIN_RESET)
+    {
+        HAL_Delay(10);
+    }
+    HAL_Delay(50);
+    LCD_FillScreen(LCD_BLACK);
+
+    /* 等待陀螺仪稳定后记录初始航向 (供 FINAL_ROTATE_ALIGN 回中用) */
+    HAL_Delay(200);
+    ProjectService_SetInitialHeading();
+    ProjectService_SetRouteState(ROUTE_ROTATE_90);
+    ProjectService_SetVisionSkip(1U);
+    ChassisPos_DrawStatus(1, "Rotate 90");
+
+    HAL_TIM_Base_Start_IT(&htim7);
+
+    while (1)
+    {
+        ProjectService_Run();
+        HAL_Delay(10);
+    }
 #else
     /* Init Servo (TIM9 software PWM) */
     Servo4_Init();

@@ -12,6 +12,7 @@
 
 /* ---- 状态变量 ---- */
 static volatile uint8_t task1_route_test_done;
+static volatile uint8_t vision_skip;
 static volatile RouteState route_state = ROUTE_HOME_LAUNCH;
 static volatile RouteState pause_next_mode;
 static volatile RouteState vision_next_mode;
@@ -43,6 +44,25 @@ static int debug_turn_target;
 int ProjectService_GetRouteState(void)
 {
     return (int)route_state;
+}
+
+void ProjectService_SetRouteState(RouteState state)
+{
+    __disable_irq();
+    route_state = state;
+    __enable_irq();
+}
+
+void ProjectService_SetVisionSkip(uint8_t on_off)
+{
+    vision_skip = on_off;
+}
+
+void ProjectService_SetInitialHeading(void)
+{
+    left_heading_absolute = HWT101_GetAbsoluteYaw();
+    left_heading_valid = 1;
+    yaw_ccw_sign = -1;
 }
 
 /* 模式2(0x02)奖杯检测: 连续 TROPHY_DETECT_CONFIRM 帧 code=26 算命中一次,
@@ -118,6 +138,45 @@ void ProjectService_Run(void)
     {
         VisionAlignment_Status vision_status;
 
+        if (vision_skip)
+        {
+            /* 编码器测试: 跳过视觉对准+直进3cm+后退3cm, 直接到 vision_next_mode */
+            ChassisPos_ResetEncoder();
+            ChassisPos_ResetVelocityPid();
+            HWT101_getAngle_Reset();
+            HeadingHold_Reset();
+            LineFollow_Stop();
+            if (vision_next_mode == ROUTE_REAR_ALIGN)
+            {
+                ChassisPos_Start(-46250, 46250, -46250, 46250);
+                ChassisPos_DrawStatus(1, "Left 2.5cm");
+            }
+            else if (vision_next_mode == ROUTE_REAR_ALIGN_2)
+            {
+                ChassisPos_Start(-74000, -74000, -74000, -74000);
+                ChassisPos_DrawStatus(1, "Back 40cm");
+            }
+            else if (vision_next_mode == ROUTE_FINAL_LEFT_FORWARD)
+            {
+                ChassisPos_Start(-37000, -37000, -37000, -37000);
+                ChassisPos_DrawStatus(1, "Back 20cm");
+            }
+            else if (vision_next_mode == ROUTE_FINAL_ROTATE_30)
+            {
+                ChassisPos_DrawStatus(1, "Rotate 30 CW");
+            }
+            else if (vision_next_mode == ROUTE_FINAL_ROTATE_ALIGN)
+            {
+                ChassisPos_DrawStatus(1, "Rotate 48 CW");
+            }
+            __disable_irq();
+            route_state = vision_next_mode;
+            __enable_irq();
+            mode_entry_tick = 0;
+            lcd_div = 0;
+            return;
+        }
+
         if (!vision_started)
         {
             VisionAlignment_Start();
@@ -151,6 +210,27 @@ void ProjectService_Run(void)
 
     if (route_state == ROUTE_VISION_FORWARD)
     {
+        /* 直进 3cm 完成: 后退 3cm 回到对准位, 再执行 vision_next_mode */
+        if (ChassisPos_Update(VISION_FORWARD_SPEED, 0,
+              HeadingHold_GetFreshCorrection()))
+        {
+            ChassisPos_ResetEncoder();
+            ChassisPos_ResetVelocityPid();
+            LineFollow_Stop();
+            ChassisPos_Start(-VISION_FORWARD_DISTANCE, -VISION_FORWARD_DISTANCE,
+                             -VISION_FORWARD_DISTANCE, -VISION_FORWARD_DISTANCE);
+            __disable_irq();
+            route_state = ROUTE_VISION_BACK;
+            __enable_irq();
+            mode_entry_tick = 0;
+            lcd_div = 0;
+            ChassisPos_DrawStatus(1, "Back 3cm");
+        }
+        return;
+    }
+
+    if (route_state == ROUTE_VISION_BACK)
+    {
         if (ChassisPos_Update(VISION_FORWARD_SPEED, 0,
               HeadingHold_GetFreshCorrection()))
         {
@@ -164,13 +244,13 @@ void ProjectService_Run(void)
             }
             else if (vision_next_mode == ROUTE_REAR_ALIGN_2)
             {
-                ChassisPos_Start(-54964, -54964, -54964, -54964);
-                ChassisPos_DrawStatus(1, "Back 30cm");
+                ChassisPos_Start(-74000, -74000, -74000, -74000);
+                ChassisPos_DrawStatus(1, "Back 40cm");
             }
             else if (vision_next_mode == ROUTE_FINAL_LEFT_FORWARD)
             {
-                ChassisPos_Start(-55500, -55500, -55500, -55500);
-                ChassisPos_DrawStatus(1, "Back 30cm");
+                ChassisPos_Start(-37000, -37000, -37000, -37000);
+                ChassisPos_DrawStatus(1, "Back 20cm");
             }
             __disable_irq();
             route_state = vision_next_mode;
@@ -644,8 +724,14 @@ void ProjectService_OnTimerElapsed(TIM_HandleTypeDef *htim)
             HWT101_getAngle_Reset();
             HeadingHold_Reset();
             Servo4_RotationUnlock();  /* 90°旋转完成, 解除锁死 */
-            ChassisPos_Start(CURVE_ENCODER_COUNTS, CURVE_ENCODER_COUNTS,
-                            CURVE_ENCODER_COUNTS, CURVE_ENCODER_COUNTS);
+            /* 斜向前进: 前向+右移同时, 右移目标 12cm = 22200 counts */
+            {
+                int curve_right = 22200;  /* 12 cm × 1850 */
+                ChassisPos_Start(CURVE_ENCODER_COUNTS + curve_right,
+                                 CURVE_ENCODER_COUNTS - curve_right,
+                                 CURVE_ENCODER_COUNTS + curve_right,
+                                 CURVE_ENCODER_COUNTS - curve_right);
+            }
             route_state = ROUTE_CURVE;
             mode_entry_tick = 0;
             lcd_div = 0;
@@ -668,54 +754,49 @@ void ProjectService_OnTimerElapsed(TIM_HandleTypeDef *htim)
 
     if (route_state == ROUTE_CURVE)
     {
-        if (mode_entry_tick == 0)
+        int cross_marker;
+        Sensor_Get();
         {
-            int cross_marker;
-            Sensor_Get();
-            {
-                int bc = GS_state[1] + GS_state[2] + GS_state[3] + GS_state[4]
-                        + GS_state[5] + GS_state[6] + GS_state[7] + GS_state[8];
-                cross_marker = (bc >= 3) && (bc <= 4)
-                            && (GS_state[3] || GS_state[4]);
-            }
-            if (cross_marker)
-                cross_marker_ticks++;
-            else
-                cross_marker_ticks = 0;
-
-            if (ChassisPos_Update(CURVE_FORWARD_SPEED, 0,
-                  HeadingHold_GetFreshCorrection())
-                || cross_marker_ticks >= 3)
-            {
-                ChassisPos_ResetVelocityPid();
-                mode_entry_tick = 1;
-                cross_marker_ticks = 0;
-                {
-                    int right = (int)((long)CURVE_ENCODER_COUNTS
-                                    * CURVE_RIGHT_SPEED / CURVE_FORWARD_SPEED)
-                                + CURVE_RIGHT_EXTRA_COUNTS;
-                    ChassisPos_Start(right, -right, -right, right);
-                }
-                ChassisPos_DrawStatus(1, "Right");
-            }
+            int bc = GS_state[1] + GS_state[2] + GS_state[3] + GS_state[4]
+                    + GS_state[5] + GS_state[6] + GS_state[7] + GS_state[8];
+            cross_marker = (bc >= 3) && (bc <= 4)
+                        && (GS_state[3] || GS_state[4]);
         }
+        if (cross_marker)
+            cross_marker_ticks++;
         else
+            cross_marker_ticks = 0;
+
+        /* 同时前向+右移(斜向). 十字提前出口已注释(调参期间). */
+        if (ChassisPos_Update(CURVE_FORWARD_SPEED, CURVE_RIGHT_MOVE_SPEED,
+              HeadingHold_GetFreshCorrection())
+            /* || cross_marker_ticks >= 3 */)
         {
-            if (ChassisPos_Update(0, CURVE_RIGHT_MOVE_SPEED,
-                  HeadingHold_GetFreshCorrection()))
-            {
-                ChassisPos_ResetVelocityPid();
-                LineFollow_Stop();
-                vision_next_mode = ROUTE_REAR_ALIGN;
-                vision_started = 0U;
-                pause_next_mode = ROUTE_VISION_ALIGN;
-                route_state = ROUTE_PAUSE_GENERIC;
-                mode_entry_tick = 0;
-                lcd_div = 0;
-                ChassisPos_DrawStatus(1, "Pause Vision");
-                Move_Control(0, 0, 0, 0);
-                return;
-            }
+            ChassisPos_ResetVelocityPid();
+            LineFollow_Stop();
+            vision_next_mode = ROUTE_REAR_ALIGN;
+            vision_started = 0U;
+            pause_next_mode = ROUTE_VISION_ALIGN;
+            route_state = ROUTE_PAUSE_GENERIC;
+            mode_entry_tick = 0;
+            lcd_div = 0;
+            ChassisPos_DrawStatus(1, "Pause Vision");
+            Move_Control(0, 0, 0, 0);
+            return;
+        }
+
+        /* LCD: 右移进度, 横向标定 18500 counts/cm (每 25ms 刷新) */
+        if (++lcd_div >= 5)
+        {
+            char buf[24];
+            int right_cnt = (int)(-debug_trap_left_position);
+            int right_cm  = right_cnt / 18500;
+            int right_mm  = (right_cnt % 18500) * 10 / 18500;
+            if (right_cm > 9) right_cm = 9;      /* 防溢出单字符 */
+            sprintf(buf, "R:%d.%dcm E:%d", right_cm, right_mm,
+                    debug_trap_left_error);
+            ChassisPos_DrawStatus(20, buf);
+            lcd_div = 0;
         }
     }
 
@@ -723,13 +804,13 @@ void ProjectService_OnTimerElapsed(TIM_HandleTypeDef *htim)
     {
         if (mode_entry_tick == 0)
         {
-            if (ChassisPos_Update(0, 300,
+            if (ChassisPos_Update(0, REAR_ALIGN_LEFT_SPEED,
                   HeadingHold_GetFreshCorrection()))
             {
                 ChassisPos_ResetVelocityPid();
                 mode_entry_tick = 1;
-                ChassisPos_Start(74000, 74000, 74000, 74000);
-                ChassisPos_DrawStatus(1, "Fwd 40cm");
+                ChassisPos_Start(55500, 55500, 55500, 55500);
+                ChassisPos_DrawStatus(1, "Fwd 30cm");
             }
         }
         else
@@ -786,22 +867,10 @@ void ProjectService_OnTimerElapsed(TIM_HandleTypeDef *htim)
         }
         else
         {
-            int cross_marker;
-            Sensor_Get();
-            {
-                int bc = GS_state[1] + GS_state[2] + GS_state[3] + GS_state[4]
-                        + GS_state[5] + GS_state[6] + GS_state[7] + GS_state[8];
-                cross_marker = (bc >= 3)
-                            && (GS_state[3] || GS_state[4]);
-            }
-            if (cross_marker)
-                cross_marker_ticks++;
-            else
-                cross_marker_ticks = 0;
-
+            /* 十字标线提前出口已注释(调参期间). */
             if (ChassisPos_Update(0, REAR_ALIGN_2_LEFT_SPEED,
                   HeadingHold_GetFreshCorrection())
-                || cross_marker_ticks >= 3)
+                /* || cross_marker_ticks >= 3 */)
             {
                 ChassisPos_ResetVelocityPid();
                 LineFollow_Stop();
@@ -865,8 +934,8 @@ void ProjectService_OnTimerElapsed(TIM_HandleTypeDef *htim)
             {
                 ChassisPos_ResetVelocityPid();
                 mode_entry_tick = 2;
-                ChassisPos_Start(111000, 111000, 111000, 111000);
-                ChassisPos_DrawStatus(1, "Fwd 60cm");
+                ChassisPos_Start(92500, 92500, 92500, 92500);
+                ChassisPos_DrawStatus(1, "Fwd 50cm");
             }
         }
         else
@@ -930,25 +999,34 @@ void ProjectService_OnTimerElapsed(TIM_HandleTypeDef *htim)
 
     if (route_state == ROUTE_FINAL_ROTATE_ALIGN)
     {
-        float error_ccw;
-        float error_abs;
-        int rotate_speed;
+        float a = Angle;
+        if (a < 0.0f) a = -a;
 
-        if (!left_heading_valid || !HWT101_IsReady())
+        /* 阶段1: 开环快速转 ~80% 路程, 不碰绝对偏航 */
+        if (a < FINAL_ROTATE_ALIGN_ANGLE * 0.8f)
         {
-            LineFollow_Stop();
-            final_left_heading_stable_ticks = 0;
+            int spd = FINAL_ROTATE_ALIGN_SPEED;
+            if (a > FINAL_ROTATE_ALIGN_ANGLE * 0.6f)
+            {
+                spd = FINAL_ROTATE_ALIGN_SPEED - (int)((a - FINAL_ROTATE_ALIGN_ANGLE * 0.6f) * 10.0f);
+                if (spd < 100) spd = 100;
+            }
+            wheel_target[1] =  spd;
+            wheel_target[2] =  spd;
+            wheel_target[3] = -spd;
+            wheel_target[4] = -spd;
         }
+        /* 阶段2: 闭环精修, 滞回防抖: >7°才修正, ≤5°才退出修正 */
         else
         {
-            error_ccw = HeadingHold_WrapAngle180(
-                left_heading_absolute - HWT101_GetAbsoluteYaw()) * yaw_ccw_sign;
-            error_abs = (error_ccw >= 0.0f) ? error_ccw : -error_ccw;
+            float raw_error = HeadingHold_WrapAngle180(
+                left_heading_absolute - HWT101_GetAbsoluteYaw());
+            float error_abs = (raw_error >= 0.0f) ? raw_error : -raw_error;
 
-            if (error_abs <= 1.5f)
+            if (error_abs <= 5.0f)
             {
                 LineFollow_Stop();
-                if (++final_left_heading_stable_ticks >= 10)
+                if (++final_left_heading_stable_ticks >= 6)
                 {
                     LineFollow_Stop();
                     pause_next_mode = ROUTE_FINAL_LEFT_40;
@@ -962,41 +1040,44 @@ void ProjectService_OnTimerElapsed(TIM_HandleTypeDef *htim)
                     return;
                 }
             }
-            else
+            else if (error_abs > 7.0f)
             {
+                /* 误差超出滞回上界才重置并修正 */
                 final_left_heading_stable_ticks = 0;
+                int spd = (int)(error_abs * 1.0f);
+                if (spd > 40) spd = 40;
+                if (spd < 3) spd = 3;
 
-                /* 回中航向角误差分三档速度: >15°全速372, >6°中速264, 小误差慢速168 */
-                if (error_abs > 15.0f)      rotate_speed = FINAL_ROTATE_ALIGN_SPEED;
-                else if (error_abs > 6.0f)  rotate_speed = 264;
-                else                        rotate_speed = 168;
-
-                if (error_ccw > 0.0f)
+                if (raw_error > 0.0f)
                 {
-                    wheel_target[1] = -rotate_speed;
-                    wheel_target[2] = -rotate_speed;
-                    wheel_target[3] =  rotate_speed;
-                    wheel_target[4] =  rotate_speed;
+                    wheel_target[1] =  spd;
+                    wheel_target[2] =  spd;
+                    wheel_target[3] = -spd;
+                    wheel_target[4] = -spd;
                 }
                 else
                 {
-                    wheel_target[1] =  rotate_speed;
-                    wheel_target[2] =  rotate_speed;
-                    wheel_target[3] = -rotate_speed;
-                    wheel_target[4] = -rotate_speed;
+                    wheel_target[1] = -spd;
+                    wheel_target[2] = -spd;
+                    wheel_target[3] =  spd;
+                    wheel_target[4] =  spd;
                 }
+            }
+            else
+            {
+                /* 5°~7° 滞回区: 停车, 不修正, 不重置 */
+                LineFollow_Stop();
             }
         }
     }
 
     if (route_state == ROUTE_FINAL_LEFT_40)
     {
-        if (ChassisPos_Update(0, FINAL_LEFT_40_SPEED,
-              HeadingHold_GetFreshCorrection()))
+        if (ChassisPos_Update(0, FINAL_LEFT_40_SPEED, 0))
         {
             LineFollow_Stop();
-#if TASK1_ROUTE_TEST_MODE
-            /* 任务1路段测试: 到达任务2扫码点(第一次左移完成)即停车. */
+#if TASK1_ROUTE_TEST_MODE || ENCODER_ROUTE_TEST_MODE
+            /* 任务1路段测试 / 编码器测试: 到达任务2扫码点停车. */
             ChassisPos_ResetVelocityPid();
             Move_Control(0, 0, 0, 0);
             task1_route_test_done = 1U;
@@ -1048,7 +1129,7 @@ void ProjectService_OnTimerElapsed(TIM_HandleTypeDef *htim)
                     ChassisPos_DrawStatus(1, "Final Fwd 30cm"); break;
                 case ROUTE_FINAL_ROTATE_ALIGN:
                     ChassisPos_ResetEncoder();
-                    ChassisPos_DrawStatus(1, "Align Yaw"); break;
+                    ChassisPos_DrawStatus(1, "Rotate 48 CW"); break;
                 case ROUTE_FINAL_LEFT_40:
                     if (final_left_stage == 0)
                     {
@@ -1244,10 +1325,13 @@ void ProjectService_OnTimerElapsed(TIM_HandleTypeDef *htim)
 
     if (route_state == ROUTE_VISION_ALIGN)
     {
-        int vision_target[4];
-        VisionAlignment_GetWheelTargets(vision_target);
-        LineFollow_SetWheelTargets(vision_target[0], vision_target[1],
-                                   vision_target[2], vision_target[3]);
+        if (!vision_skip)
+        {
+            int vision_target[4];
+            VisionAlignment_GetWheelTargets(vision_target);
+            LineFollow_SetWheelTargets(vision_target[0], vision_target[1],
+                                       vision_target[2], vision_target[3]);
+        }
     }
 
     if (route_state == ROUTE_TRACK_FIRST)

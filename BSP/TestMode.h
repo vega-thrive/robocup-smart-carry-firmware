@@ -10,6 +10,7 @@
 #define COLOR_SERVO_TEST_MODE   0   /* 转盘颜色识别测试: 上电CH2 850us, 识别到色块转一档 */
 #define SERVO_CHANNEL_TEST_MODE 0   /* CH2 固定脉宽测试 */
 #define TASK1_ROUTE_TEST_MODE   0   /* 仅跑任务1路段, 任务2扫码点停车 */
+#define ENCODER_ROUTE_TEST_MODE 1   /* 编码器定距专项测试: ROTATE_90→FINAL_LEFT_40, 跳过视觉/扫码 */
 
 /* ---- 测试分支专用常量 (仅对应测试模式生效) ---- */
 #define COLOR_SERVO_CHANNEL     2U
